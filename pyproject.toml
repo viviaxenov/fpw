@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fpw"
+authors = [
+  {name = "Vitalii Aksenov", email = "viviaxenov@gmail.com"},
+]
+readme = 'README.md'
+version = "0.0.1"
+requires-python = ">= 3.8"
+dependencies = [
+    "docstring-inheritance", 
+    "numba >= 0.59.1",
+    "typing_extensions >= 4.11.0", 
+    "torch >= 2.2.2", 
+    "geomloss >= 0.2.6", 
+    "ott-jax >= 0.4.9"
+]
+
+[project.optional-dependencies]
+extra = [
+    "emcee >= 3.1.6", 
+    "h5py >= 3.11.0", 
+    "num2tex >= 0.8", 
+    "pandas >= 2.1.4", 
+]
