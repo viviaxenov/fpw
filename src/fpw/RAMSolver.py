@@ -3,8 +3,6 @@ from typing import Callable, Union, List, Dict, Generator, Literal
 import numpy as np
 import scipy as sp
 
-import ot
-
 import torch
 from geomloss import SamplesLoss
 
