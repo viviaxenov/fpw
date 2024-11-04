@@ -28,7 +28,9 @@ def _get_vector_transport(kind="translation", *args, **kwargs):
 def _ot_map_geomloss(x0, x1, reg_sinkhorn, *sinkhorn_args, **sinkhorn_kwargs):
     _x0, _x1 = torch.from_numpy(x0), torch.from_numpy(x1)
     _x0.requires_grad = True
-    S2_obj = _S2_dist_fn(_x0, _x1)
+    S2_obj = SamplesLoss(loss="sinkhorn", blur=reg_sinkhorn, **sinkhorn_kwargs)(
+        _x0, _x1
+    )
     [v] = (torch.autograd.grad(S2_obj, [_x0]),)
     v = v[0]
     v *= -v.shape[0]
@@ -97,7 +99,7 @@ class RAMSolver:
         if ot_map_solver == 'geomloss':
             self._ot_map = _ot_map_geomloss
         elif ot_map_solver == 'pot':
-            self._ot_map = ot_map_pot
+            self._ot_map = _ot_map_pot
         else:
             raise RuntimeError(f"{ot_map_solver=:} not supported")
 

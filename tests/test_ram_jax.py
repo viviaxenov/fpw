@@ -1,90 +1,103 @@
 from typing import Callable, Union, List, Dict, Generator, Literal
-
-import numpy as np
-import scipy as sp
-
-import torch
-from geomloss import SamplesLoss
-
+from functools import partial
 import matplotlib.pyplot as plt
 
-from fpw import RAMSolver
+import jax
+import jax.numpy as jnp
+import jax.scipy as jsp
+import ott
 
-_S2_dist_fn = SamplesLoss(blur=0.03)
-S2_dist_fn = lambda _s1, _s2: _S2_dist_fn(
-    torch.from_numpy(_s1), torch.from_numpy(_s2)
-)
+import scipy as sp
+import numpy as np
 
-def get_lpr_and_score_fn_gaussian(m: np.ndarray, sigma: np.ndarray):
+from fpw import RAMSolverJAX
+
+
+@jax.jit
+def S2_dist_fn(x0, x1, reg_sinkhorn=0.03):
+    out = ott.tools.sinkhorn_divergence.sinkhorn_divergence(
+        ott.geometry.pointcloud.PointCloud,
+        x=x0,
+        y=x1,
+        epsilon=reg_sinkhorn,
+        static_b=True,
+    )
+    return out[0]
+
+
+def get_lpr_and_score_fn_gaussian(m: jnp.ndarray, sigma: jnp.ndarray):
     psq = np.linalg.inv(sigma)
+    psq = jnp.array(psq)
 
     def _lpr(x):
-        return (
-            -0.5 * np.linalg.norm((psq @ (x - m[np.newaxis, :]).T).T, axis=-1) ** 2
-        )
+        return -0.5 * jnp.linalg.norm((psq @ (x - m[jnp.newaxis, :]).T).T, axis=-1) ** 2
 
     def _score(x):
-        return -(psq.T @ psq @ (x - m[np.newaxis, :]).T).T
+        return -(psq.T @ psq @ (x - m[jnp.newaxis, :]).T).T
 
     return _lpr, _score
 
-def ula_step(x: np.ndarray, timestep: np.float64, score_fn: Callable):
-    noise = sp.stats.norm().rvs(size=x.shape)
-    return x + score_fn(x) * timestep + noise * (2.0 * timestep) ** 0.5
 
+def ula_step(x: jnp.ndarray, timestep: jnp.float64, score_fn: Callable, key):
+    key, subkey = jax.random.split(key)
+    noise = jax.random.normal(subkey, shape=x.shape)
+    return x + score_fn(x) * timestep + noise * (2.0 * timestep) ** 0.5, key
+
+
+@partial(jax.jit, static_argnums=[2, 3])
 def mala_step(
-    x: np.ndarray,
-    timestep: np.float64,
-    log_prob: Callable,
-    score_fn: Callable,
+    x: jnp.ndarray, timestep: jnp.float64, log_prob: Callable, score_fn: Callable, key
 ):
-    noise = sp.stats.norm().rvs(size=x.shape)
+    key, subkey = jax.random.split(key)
+    noise = jax.random.normal(subkey, shape=x.shape)
     x_prop = x + score_fn(x) * timestep + noise * (2.0 * timestep) ** 0.5
 
     d_log_prob = log_prob(x_prop) - log_prob(x)
     d_transition = (
-        np.linalg.norm((x - x_prop - timestep * score_fn(x_prop)), axis=-1) ** 2
-        - 2.0 * timestep * np.linalg.norm(noise, axis=-1) ** 2
+        jnp.linalg.norm((x - x_prop - timestep * score_fn(x_prop)), axis=-1) ** 2
+        - 2.0 * timestep * jnp.linalg.norm(noise, axis=-1) ** 2
     )
 
-    log_alpha = np.minimum(0, d_log_prob - d_transition / (4.0 * timestep))
-    u = np.random.rand(x.shape[0])
-    is_accepted = np.log(u) <= log_alpha
+    log_alpha = jnp.minimum(0, d_log_prob - d_transition / (4.0 * timestep))
+    key, subkey = jax.random.split(key)
+    u = jax.random.uniform(subkey, shape=(x.shape[0],))
+    is_accepted = jnp.log(u) <= log_alpha
     acceptance_rate = is_accepted.mean()
-    x_new = np.where(is_accepted[:, np.newaxis], x_prop, x)
+    x_new = jnp.where(is_accepted[:, np.newaxis], x_prop, x)
 
-    return x_new, acceptance_rate
+    return x_new, acceptance_rate, key
+
 
 rs = 10
-N_particles = 50
+N_particles = 200
 dim = 2
-N_steps = 50
-hist_lens = [1, 2, 5, 10, 15]
+N_steps = 100
+hist_lens = [1, 2, 5, 10, 15][:3]
+
+key = jax.random.PRNGKey(rs)
 
 if dim == 2:
     sigma = np.array([[1.0, 0.8], [0.8, 1.0]])
-    m = np.array([10.0, 4.0]) 
+    m = np.array([10.0, 4.0]) * 0.0
 else:
     U = sp.stats.ortho_group.rvs(dim, random_state=rs)
     sigma = np.diag([1.0 - 0.9 * 0.8**n for n in range(dim)])
     sigma = U.T @ sigma @ U
     m = sp.stats.uniform.rvs(size=dim, random_state=rs) * 0.0
 
-sample_targ = sp.stats.multivariate_normal(
-    mean=m,
-    cov=sigma.T @ sigma,
-).rvs(size=N_particles)
-sample_init = sp.stats.multivariate_normal(
-    cov=np.eye(dim),
-).rvs(
-    size=N_particles,
-    random_state=rs,
+key, split = jax.random.split(key)
+sample_targ = jax.random.multivariate_normal(
+    split, m, sigma.T @ sigma, shape=(N_particles,)
 )
+key, split = jax.random.split(key)
+sample_init = jax.random.normal(split, shape=(N_particles, dim))
+
+print(sample_init.shape, sample_targ.shape)
 
 lpr, score = get_lpr_and_score_fn_gaussian(m, sigma)
 S2_errs_mala = []
 acceptance_rates = []
-timesteps = np.linspace(0.01, .11, 51, endpoint=True)
+timesteps = np.linspace(0.1, 1.1, 21, endpoint=True)
 
 ar_means = []
 logS2_rates = []
@@ -96,7 +109,8 @@ for dt in timesteps:
     ars = []
     for _ in range(N_steps):
         S2_err.append(S2_dist_fn(sample_mala, sample_targ))
-        sample_mala, ar = mala_step(sample_mala, dt, lpr, score)
+        key, split = jax.random.split(key)
+        sample_mala, ar, key = mala_step(sample_mala, dt, lpr, score, split)
         ars.append(ar)
     S2_errs_mala.append(S2_err)
     acceptance_rates.append(ars)
@@ -127,19 +141,32 @@ ax.set_ylabel("Convergence rate ($\\log S_2$)")
 
 fig.tight_layout()
 
-operator = lambda _x: mala_step(_x, dt_opt, lpr, score)[0]
-# operator = lambda _x: ula_step(_x, dt_opt, score)
+
+def operator(_x, keygen):
+    split = next(keygen)
+    return mala_step(_x, dt_opt, lpr, score, split)[0]
+
+
+def keygen(key):
+    while True:
+        key, split = jax.random.split(key)
+        yield split
+
+
+operator = partial(operator, keygen=keygen(key))
+
+
 S2_convs = []
 for m_history in hist_lens:
     S2_err_ram = []
-    solver = RAMSolver(
+    solver = RAMSolverJAX(
         operator,
+        sample_init.copy(),
         history_len=m_history,
         relaxation=0.8,
         reg_sinkhorn=0.01,
         sinkhorn_kwargs={"scaling": 0.3},
     )
-    solver._initialize_iteration(sample_init.copy())
     for k in range(N_steps):
         sample_ram = solver._x_prev
         S2_err_ram.append(S2_dist_fn(sample_ram, sample_targ))

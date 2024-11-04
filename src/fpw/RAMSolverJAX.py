@@ -1,13 +1,14 @@
 from typing import Callable, Union, List, Dict, Generator, Literal
 
 import numpy as np
-import scipy as sp
 
 import jax
 import jax.numpy as jnp
 import ott
+import equinox
 
-from .pt import parallel_transport
+# TODO: <<Real>> parallel transport + JAX
+# from .pt import parallel_transport
 
 
 def vector_translation(x0, x1, u0):
@@ -29,13 +30,13 @@ class RAMSolverJAX:
     def __init__(
         self,
         operator: Callable,
-        relaxation: Union[np.float64, Generator] = 0.95,
+        x0: jnp.array,
+        relaxation: Union[jnp.float64, Generator] = 0.95,
         history_len: int = 2,
-        ot_map_solver: Literal["jax"] = "jax",
         vector_transport_kind: Literal["translation", "parallel"] = "translation",
         vt_args: List = [],
         vt_kwargs: Dict = {},
-        reg_sinkhorn: np.float64 = 0.2,
+        reg_sinkhorn: jnp.float64 = 0.1,
         sinkhorn_args: List = [],
         sinkhorn_kwargs: Dict = {},
     ):
@@ -56,27 +57,30 @@ class RAMSolverJAX:
             raise RuntimeError(f"Type of relaxation ({type(relaxation)}) not supported")
 
         self._vt = get_vector_transport(vector_transport_kind, *vt_args, **vt_kwargs)
-
-        if ot_map_solver == "geomloss":
-            self._ot_map = ot_map_geomloss
-        elif ot_map_solver == "pot":
-            self._ot_map = ot_map_pot
-        else:
-            raise RuntimeError(f"{ot_map_solver=:} not supported")
+        # self._vt_vmapped = jax.vmap(self._vt)
 
         self._reg_sinkhorn = reg_sinkhorn
         self._sinkhorn_args = sinkhorn_args
         self._sinkhorn_kwargs = sinkhorn_kwargs
+        self._initialize_iteration(x0)
 
-    def _operator_and_residual(self, x_cur: np.ndarray):
+    # TODO: pytree functional to use @jit with everything
+
+    def _operator_and_residual(self, x_cur: jnp.ndarray):
         x0 = x_cur
         x1 = self._operator(x_cur)
-
-        return self._ot_map(
-            x0, x1, self._reg_sinkhorn, *self._sinkhorn_args, **self._sinkhorn_kwargs
+        geom = ott.geometry.pointcloud.PointCloud(x0, x1, epsilon=self._reg_sinkhorn)
+        ot = ott.solvers.linear.sinkhorn.Sinkhorn()(
+            ott.problems.linear.linear_problem.LinearProblem(geom)
         )
+        ot_plan = ot.matrix
+        x1_barycentric = (ot_plan[:, :, jnp.newaxis] * x1[jnp.newaxis, :, :]).sum(
+            axis=1
+        ) * x0.shape[0]
 
-    def _initialize_iteration(self, x0: np.ndarray):
+        return x1_barycentric, x1_barycentric - x0
+
+    def _initialize_iteration(self, x0: jnp.ndarray):
         N, d = x0.shape
         x1, r0 = self._operator_and_residual(x0)
 
@@ -87,14 +91,16 @@ class RAMSolverJAX:
         self._r_prev = r0.copy()
 
         self._delta_rs = []
-        self._delta_xs = [r0.copy()]  # Not sure
+        self._delta_xs = [r0.copy()]
         self._k = 1
 
+    # TODO jit
     def _step(
         self,
     ):
         _, rk = self._operator_and_residual(self._x_cur)
         # Transport Delta X and Delta r vectors to the tangent space of the current iter
+        # TODO: use vmap instead
         self._delta_xs = [
             self._vt(self._x_prev, self._x_cur, delta_x)
             for delta_x in self._delta_xs[: self._m]
@@ -109,12 +115,12 @@ class RAMSolverJAX:
 
         mk = len(self._delta_rs)
         r = rk.reshape(-1)
-        R = np.stack(self._delta_rs, axis=-1).reshape(-1, mk)
-        X = np.stack(self._delta_xs, axis=-1).reshape(-1, mk)
+        R = jnp.stack(self._delta_rs, axis=-1).reshape(-1, mk)
+        X = jnp.stack(self._delta_xs, axis=-1).reshape(-1, mk)
 
         # TODO: QR solution?
-        Gamma = sp.optimize.lsq_linear(R, r)
-        Gamma = np.atleast_1d(Gamma.x)
+        Gamma = jnp.linalg.lstsq(R, r)[0]
+        Gamma = jnp.atleast_1d(Gamma)
 
         rk_bar = r - R @ Gamma
         delta_x_cur = -X @ Gamma + next(self._relaxation) * rk_bar
@@ -127,10 +133,10 @@ class RAMSolverJAX:
         self._k += 1
         return self._x_cur
 
-    def iterate(self, x0: np.ndarray, max_iter: int, residual_conv_tol: np.float64):
+    def iterate(self, x0: jnp.ndarray, max_iter: int, residual_conv_tol: jnp.float64):
         if self._k == 0:
             self._initialize_iteration(x0)
-        while np.linalg.norm(self._r_prev) > residual_conv_tol:
+        while jnp.linalg.norm(self._r_prev) > residual_conv_tol:
             self._step()
             if self._k >= max_iter:
                 break
@@ -145,128 +151,3 @@ class RAMSolverJAX:
         k = self._k
         self._initialize_iteration(self._x_cur.copy())
         self._k = k
-
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-
-    _S2_dist_fn = SamplesLoss(blur=0.3)
-    S2_dist_fn = lambda _s1, _s2: _S2_dist_fn(
-        torch.from_numpy(_s1), torch.from_numpy(_s2)
-    )
-
-    def get_lpr_and_score_fn_gaussian(m: np.ndarray, sigma: np.ndarray):
-        psq = np.linalg.inv(sigma)
-
-        def _lpr(x):
-            return (
-                -0.5 * np.linalg.norm((psq @ (x - m[np.newaxis, :]).T).T, axis=-1) ** 2
-            )
-
-        def _score(x):
-            return -(psq.T @ psq @ (x - m[np.newaxis, :]).T).T
-
-        return _lpr, _score
-
-    def ula_step(x: np.ndarray, timestep: np.float64, score_fn: Callable):
-        noise = sp.stats.norm().rvs(size=x.shape)
-        return x + score_fn(x) * timestep + noise * (2.0 * timestep) ** 0.5
-
-    def mala_step(
-        x: np.ndarray,
-        timestep: np.float64,
-        log_prob: Callable,
-        score_fn: Callable,
-    ):
-        noise = sp.stats.norm().rvs(size=x.shape)
-        x_prop = x + score_fn(x) * timestep + noise * (2.0 * timestep) ** 0.5
-
-        d_log_prob = log_prob(x_prop) - log_prob(x)
-        d_transition = (
-            np.linalg.norm((x - x_prop - timestep * score_fn(x_prop)), axis=-1) ** 2
-            - 2.0 * timestep * np.linalg.norm(noise, axis=-1) ** 2
-        )
-
-        log_alpha = np.minimum(0, d_log_prob - d_transition / (4.0 * timestep))
-        u = np.random.rand(x.shape[0])
-        is_accepted = np.log(u) <= log_alpha
-        acceptance_rate = is_accepted.mean()
-        x_new = np.where(is_accepted[:, np.newaxis], x_prop, x)
-
-        return x_new, acceptance_rate
-
-    rs = 2
-    N_particles = 5000
-    dim = 2
-    N_steps = 100
-
-    if dim == 2:
-        sigma = np.array([[1.0, 0.4], [0.4, 1.0]])
-        m = np.array([6, 2.0])
-    else:
-        U = sp.stats.ortho_group.rvs(dim, random_state=rs)
-        sigma = np.diag([1.0 - 0.7 * 0.8**n for n in range(dim)])
-        sigma = U.T @ sigma @ U
-        m = sp.stats.uniform.rvs(size=dim, random_state=rs)
-
-    sample_targ = sp.stats.multivariate_normal(
-        mean=m,
-        cov=sigma.T @ sigma,
-    ).rvs(size=N_particles)
-    sample_init = sp.stats.multivariate_normal(
-        cov=np.eye(dim),
-    ).rvs(
-        size=N_particles,
-        random_state=rs,
-    )
-
-    lpr, score = get_lpr_and_score_fn_gaussian(m, sigma)
-    operator = lambda _x: mala_step(_x, 0.1, lpr, score)[0]
-    # operator = lambda _x: ula_step(_x, 0.1, score)
-    sample_mala = sample_init.copy()
-    S2_err = []
-    for _ in range(N_steps):
-        S2_err.append(S2_dist_fn(sample_mala, sample_targ))
-        sample_mala = operator(sample_mala)
-
-    S2_convs = []
-    hist_lens = [1, 2, 5, 10, 20]
-    for m_history in hist_lens:
-        S2_err_ram = []
-        solver = RAMSolver(
-            operator,
-            history_len=m_history,
-            relaxation=1.0,
-            reg_sinkhorn=0.03,
-            sinkhorn_kwargs={"numIterMax": int(5e4)},
-        )
-        solver._initialize_iteration(sample_init.copy())
-        for _ in range(N_steps):
-            sample_ram = solver._x_prev
-            S2_err_ram.append(S2_dist_fn(sample_ram, sample_targ))
-            solver._step()
-        S2_convs.append(S2_err_ram)
-
-    fig, axs = plt.subplots(1, 2, figsize=(20, 10))
-
-    ax = axs[0]
-
-    ax.scatter(*sample_init[:, :2].T, s=2.5, label="Initial")
-    ax.scatter(*sample_targ[:, :2].T, s=2.5, label="Target")
-    ax.scatter(*sample_mala[:, :2].T, s=2.5, marker="+", label="MALA approx")
-    ax.scatter(*sample_ram[:, :2].T, s=2.5, marker="x", label="RAM approx")
-
-    ax = axs[1]
-    ax.plot(S2_err, label="MALA", linewidth=2.0, linestyle="--")
-    for S2_err_ram, m in zip(S2_convs, hist_lens):
-        ax.plot(S2_err_ram, label=f"MALA+RAM, ${m=}$", linewidth=0.7)
-    ax.set_yscale("log")
-    ax.set_xlabel("$k$")
-    ax.set_ylabel("$S_s(\\mu_k, \\mu^*)$")
-
-    for ax in axs:
-        ax.grid()
-        ax.legend()
-    fig.tight_layout()
-    fig.savefig("ram_mala_test.pdf")
-    plt.show()
