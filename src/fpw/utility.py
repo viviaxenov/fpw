@@ -1,10 +1,14 @@
 import abc
 from docstring_inheritance import GoogleDocstringInheritanceInitMeta
+from typing import Union, Tuple
+from types import MethodType
+
 import warnings
 
 
 import numpy as np
 import scipy as sp
+import torch
 
 import os
 import sys
@@ -24,6 +28,8 @@ class Distribution(metaclass=_Meta):
 
     Attributes :
         dim : dimension of the distribution
+
+    .. automethod:: _sample
     """
 
     N_steps_mcmc_tune = 100
@@ -44,21 +50,19 @@ class Distribution(metaclass=_Meta):
     def name(self) -> str:
         return self._name
 
-    @abc.abstractmethod
-    def density(self, x: np.ndarray) -> np.ndarray:
+    def density(self, x: torch.Tensor) -> torch.Tensor:
         """
         Returns a value, proportional to the pdf of the distribution.
 
         Args:
-            x (np.ndarray) : array of shape `(N_x, dim)` --- coordinates of N_x points
+            x (torch.Tensor) : array of shape `(N_x, dim)` --- coordinates of N_x points
 
         Returns:
-            np.ndarray : array of shape `(N_x)` --- value of density (up to normalization constant) at these points
+            torch.Tensor : array of shape `(N_x)` --- value of density (up to normalization constant) at these points
         """
-        pass
+        return torch.exp(self.log_prob(x))
 
-    @abc.abstractmethod
-    def log_density(self, x: np.ndarray) -> np.ndarray:
+    def log_prob(self, x: torch.Tensor) -> torch.Tensor:
         """
         Returns a value, equal to the log pdf of the distribution (up to an additive constant).
 
@@ -66,22 +70,21 @@ class Distribution(metaclass=_Meta):
             x : array of shape `(N_x, dim)` --- coordinates of N_x points
 
         Returns:
-            np.ndarray : array of shape `(N_x)` --- value of log density (up to an additive constant) at these points
+            torch.Tensor : array of shape `(N_x)` --- value of log density (up to an additive constant) at these points
         """
-        pass
+        return torch.log(self.density(x))
 
-    @abc.abstractclassmethod
-    def score(self, x: np.ndarray) -> np.ndarray:
+    def np_log_prob(self, x: np.ndarray):
         """
-        Returns the gradient of the log pdf of the distribution.
+        Returns a value, equal to the log pdf of the distribution (up to an additive constant).
 
         Args:
             x : array of shape `(N_x, dim)` --- coordinates of N_x points
 
         Returns:
-            np.ndarray : array of shape `(N_x, dim)` --- value of the log gradient
+            torch.Tensor : array of shape `(N_x)` --- value of log density (up to an additive constant) at these points
         """
-        pass
+        return self.log_prob(torch.from_numpy(x)).numpy()
 
     @abc.abstractmethod
     def __getstate__(
@@ -90,6 +93,16 @@ class Distribution(metaclass=_Meta):
         if hasattr(self, "mcmc_cov") and hasattr(self, "mcmc_t_ac"):
             return self.mcmc_cov, self.mcmc_t_ac
         return
+
+    @abc.abstractmethod
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+
+        if not (
+            cls.density is not Distribution.density
+            or cls.log_prob is not Distribution.log_prob
+        ):
+            raise TypeError(f"{cls.__name__} must overload either density or log_prob")
 
     @abc.abstractmethod
     def __setstate__(self, *args):
@@ -104,15 +117,38 @@ class Distribution(metaclass=_Meta):
     ):
         pass
 
-    def sample(self, N_samples: int, *args, run_mcmc=False, **kwargs) -> np.ndarray:
+    def sample(self, N_samples: Union[int, Tuple[int]], **kwargs):
         """
         Returns the sample from the distribution
+
+        Args:
+            N_samples: if `int` --- number of samples; if `tuple(int)` --- the leading shape for the sample, i.e. the output will have shape (N_samples[0], ..., dim)
+
+        Returns:
+            torch.Tensor
+        """
+        if isinstance(N_samples, int):
+            N_samples = (N_samples,)
+            _N_samples = np.prod(N_samples)
+            spl = self._sample(_N_samples, **kwargs)
+            return torch.Tensor(spl.reshape(N_samples + (-1,)))
+
+    def _sample(self, N_samples: int, run_mcmc=False) -> torch.Tensor:
+        """
+        Returns the sample from the distribution
+
+        .. note::
+            In child classes, this should implement the actual sampling algorithm. The ``sample`` wrapping method is implemented to have the same call signature as ``torch.distributions.Distribution.sample`` method
+
+            For any ``Distribution``, for which ``log_prob`` is implemented, a basic Metropolis-Hastings MCMC is implemented.
+            If one intends to use it, it is advised to override a separate ``np_log_prob`` method for efficiency.
+
 
         Args:
             N_samples: number of samples
 
         Returns:
-            np.ndarray : array of shape `(N_samples, dim)` --- number of samples
+            torch.Tensor : array of shape `(N_samples, dim)` --- number of samples
         """
         fname_h5, fname_pickle = self._get_sample_file_paths()
 
@@ -139,6 +175,12 @@ class Distribution(metaclass=_Meta):
 
         if N_samples + self.n_samples_read > chain.shape[0]:
             # do addtitonal MCMC runs
+            if self.np_log_prob is Distribution.np_log_prob:
+                warnings.warn(
+                    "For efficiency of MCMC sampling, {self.__class__.__name__} must override np_log_prob to compute the log density with numpy only (no pytorch)",
+                    category=ResourceWarning,
+                )
+
             print("Running additional MCMC")
             n_thin = int(np.ceil(self.mcmc_t_ac))
             N_steps = N_samples + self.n_samples_read - chain.shape[0]
@@ -147,7 +189,7 @@ class Distribution(metaclass=_Meta):
             sampler = emcee.EnsembleSampler(
                 self.__class__.N_ensemble_mcmc,
                 self.dim,
-                self.log_density,
+                self.np_log_prob,
                 moves=[(emcee.moves.GaussianMove(cov=self.mcmc_cov), 1.0)],
                 backend=backend,
             )
@@ -178,6 +220,11 @@ class Distribution(metaclass=_Meta):
     def _prepare_mcmc_samples(
         self,
     ):
+        if self.np_log_prob is Distribution.np_log_prob:
+            warnings.warn(
+                "For efficiency of MCMC sampling, {self.__class__.__name__} must override np_log_prob to compute the log density with numpy only (no pytorch)",
+                category=ResourceWarning,
+            )
         # tune COV in the MH-MCMC
         n_step_tune = self.__class__.N_steps_mcmc_tune
         n_ensemble_tune = self.__class__.N_ensemble_mcmc_tune
@@ -192,7 +239,7 @@ class Distribution(metaclass=_Meta):
             sampler = emcee.EnsembleSampler(
                 n_ensemble_tune,
                 self.dim,
-                self.log_density,
+                self.np_log_prob,
                 moves=[(emcee.moves.GaussianMove(cov=cov), 1.0)],
             )
             state = sampler.run_mcmc(init, n_step_tune, progress=False)
@@ -223,7 +270,7 @@ class Distribution(metaclass=_Meta):
         sampler = emcee.EnsembleSampler(
             self.__class__.N_ensemble_mcmc,
             self.dim,
-            self.log_density,
+            self.np_log_prob,
             moves=[(emcee.moves.GaussianMove(cov=self.mcmc_cov), 1.0)],
         )
         state = sampler.run_mcmc(
@@ -247,7 +294,7 @@ class Distribution(metaclass=_Meta):
         sampler = emcee.EnsembleSampler(
             self.__class__.N_ensemble_mcmc,
             self.dim,
-            self.log_density,
+            self.np_log_prob,
             moves=[(emcee.moves.GaussianMove(cov=self.mcmc_cov), 1.0)],
             backend=emcee.backends.HDFBackend(fname_h5),
         )
@@ -261,27 +308,11 @@ class Distribution(metaclass=_Meta):
         return sampler.backend
 
 
-class UniformRing(Distribution):
-    def __init__(self, r_min: float = 1.0, r_max: float = 1.0):
-        self._r_min = r_min
-        self._r_max = r_max
-        self._h = r_max - r_min
-        self._dim = 2
-        self._name = f"UniformRing"
-        self._theta_gen = sp.stats.uniform(loc=0.0, scale=2.0 * np.pi)
-        self._r_gen = sp.stats.uniform(loc=self._r_min, scale=self._h)
-
-    def sample(self, N_samples):
-        thetas = self._theta_gen.rvs(N_samples)
-        rs = self._r_gen.rvs(N_samples)
-        return np.stack((rs * np.cos(thetas), rs * np.sin(thetas)), axis=1)
-
-
 class Gaussian(Distribution):
     def __init__(
         self,
-        mean: np.ndarray = None,
-        cov: np.ndarray = None,
+        mean: torch.Tensor = None,
+        cov: torch.Tensor = None,
         dim: int = None,
         m_mag: float = 0.0,
         sigma_min: float = 1,
@@ -331,20 +362,17 @@ class Gaussian(Distribution):
 
         self._name = f"normal_d{self._dim}"
 
-    def log_density(self, x: np.ndarray) -> np.ndarray:
+    def log_prob(self, x: torch.Tensor) -> torch.Tensor:
         x_m = x - self.mean[np.newaxis, :]
-        return (
-            -0.5
-            * np.einsum('bi,ij,bj->b', x_m, self.precision, x_m)
-        )
+        return -0.5 * np.einsum("bi,ij,bj->b", x_m, self.precision, x_m)
 
-    def density(self, x: np.ndarray) -> np.ndarray:
-        return np.exp(self.log_density(x))
+    def density(self, x: torch.Tensor) -> torch.Tensor:
+        return np.exp(self.log_prob(x))
 
     def score(self, x):
         return -(self.precision @ (x - self.mean[np.newaxis, :]).T).T
 
-    def sample(self, N_samples):
+    def _sample(self, N_samples: Union[int, Tuple[int]]):
         x0 = self._norm_gen.rvs(
             size=(N_samples, self.dim), random_state=self._rs_sample
         )
@@ -353,8 +381,8 @@ class Gaussian(Distribution):
 
     def __setstate__(
         self,
-        mean: np.ndarray,
-        cov: np.ndarray,
+        mean: torch.Tensor,
+        cov: torch.Tensor,
     ):
         self.m = m.copy()
         self.cov = cov.copy()
@@ -396,7 +424,7 @@ class Gaussian(Distribution):
 class Nonconvex(Distribution):
     def __init__(
         self,
-        a: np.ndarray = None,
+        a: torch.Tensor = None,
         dim: int = None,
         a_min: float = -1.0,
         a_max: float = 1.0,
@@ -409,9 +437,11 @@ class Nonconvex(Distribution):
             a = sp.stats.uniform(loc=a_min, scale=(a_max - a_min)).rvs(
                 size=dim, random_state=rs_params
             )
+        a = torch.Tensor(a)
 
         self.__setstate__((a,))
 
+        self._a_np = a.numpy()
         self._name = f"nonconvex_d{self._dim}"
 
     def __getstate__(
@@ -422,26 +452,21 @@ class Nonconvex(Distribution):
     def __eq__(self, other):
         if not isinstance(other, Nonconvex):
             return False
-        return np.allclose(self._a, other._a)
+        
+        return torch.allclose(self._a, other._a)
 
     def __setstate__(self, args):
         a = args[0]
+        a = a.detach().clone() if isinstance(a, torch.Tensor) else torch.Tensor(a) 
         self._dim = a.shape[0]
-        self._a = a.copy()
+        self._a = a
         super().__setstate__(*args[1:])
 
-    def log_density(self, x: np.ndarray):
-        return -np.linalg.norm(x - self._a[np.newaxis, :], ord=0.5, axis=-1)
+    def log_prob(self, x: torch.Tensor):
+        return -torch.linalg.norm(x - self._a[None, :], ord=0.5, axis=-1)
 
-    def density(self, x: np.ndarray):
-        return np.exp(self.log_density(x))
-
-    def score(self, x: np.ndarray):
-        y = np.abs(x - self._a[np.newaxis, :]) ** 0.5
-        return -(
-            (np.sum(y, axis=-1))[:, np.newaxis]
-            / (y * np.sign(x - self._a[np.newaxis, :]) + 1e-30)
-        )
+    def np_log_prob(self, x: np.ndarray):
+        return -np.linalg.norm(x - self._a_np[np.newaxis, :], ord=0.5, axis=-1)
 
 
 class DoubleMoon(Distribution):
@@ -469,30 +494,23 @@ class DoubleMoon(Distribution):
         self._a, self._dim = args[:2]
         super().__setstate__(*args[3:])
 
-    def log_density(self, x: np.ndarray):
+    def log_prob(self, x: torch.Tensor):
+        nx = torch.linalg.norm(x, ord=2, axis=-1)
+        x1 = x[..., 0]
+        return (-2.0 * (nx - self._a) ** 2) + torch.log(
+            torch.exp(-2.0 * (x1 - self._a) ** 2)
+            + torch.exp(-2.0 * (x1 + self._a) ** 2)
+        )
+
+    def np_log_prob(self, x: np.ndarray):
         nx = np.linalg.norm(x, ord=2, axis=-1)
         x1 = x[..., 0]
         return (-2.0 * (nx - self._a) ** 2) + np.log(
             np.exp(-2.0 * (x1 - self._a) ** 2) + np.exp(-2.0 * (x1 + self._a) ** 2)
         )
 
-    def density(self, x: np.ndarray):
-        return np.exp(self.log_density(x))
 
-    def score(self, x: np.ndarray):
-        nx = np.linalg.norm(x, ord=2, axis=-1)[:, np.newaxis]
-        deriv = -4.0 * (nx - self._a) / nx * x
-
-        x1 = x[..., 0]
-        deriv[:, 0] += (
-            -4.0 * np.exp(-2.0 * (x1 - self._a) ** 2) * (x1 - self._a)
-            - 4.0 * np.exp(-2.0 * (x1 + self._a) ** 2) * (x1 + self._a)
-        ) / (np.exp(-2.0 * (x1 - self._a) ** 2) + np.exp(-2.0 * (x1 + self._a) ** 2))
-
-        return deriv
-
-
-class Operator:
+class Operator(metaclass=_Meta):
     @property
     def distribution(self) -> str:
         return self._distribution
@@ -505,15 +523,41 @@ class Operator:
     def name(self) -> str:
         return self._name
 
-    def __init__(self, target_distribution: Distribution, *args, **kwargs):
+    def __init__(
+        self,
+        target_distribution: Union[Distribution, torch.distributions.Distribution],
+        *args,
+        **kwargs,
+    ):
         self._distribution = target_distribution
 
     @abc.abstractmethod
-    def __call__(self, x: np.ndarray):
+    def __call__(self, x: torch.Tensor):
         pass
 
 
-class ULAStep(Operator):
+class ScoreBasedOperator(Operator):
+    def __init__(
+        self,
+        target_distribution: Union[Distribution, torch.distributions.Distribution],
+        *args,
+        **kwargs,
+    ):
+        super().__init__(target_distribution)
+
+        if not hasattr(self._distribution, "score"):
+
+            def score(self, x: torch.Tensor):
+                _x = x.detach().clone()
+                _x.requires_grad = True
+                ld = self.log_prob(_x)
+                _score = torch.autograd.grad([ld], [_x], torch.ones(x.shape[0]))[0]
+                return _score
+
+            setattr(self._distribution, "score", MethodType(score, self._distribution))
+
+
+class ULAStep(ScoreBasedOperator):
     def __init__(self, target_distribution, timestep: float):
         super().__init__(target_distribution)
         self._timestep = timestep
@@ -522,17 +566,17 @@ class ULAStep(Operator):
     def name(self):
         return f"ULAStep_target_dist={target_distribution.name}_dt={self._timestep}"
 
-    def step(self, x: np.ndarray, dt: float = None):
+    def step(self, x: torch.Tensor, dt: float = None):
         dt = self._timestep if dt is None else dt
-        noise = sp.stats.norm().rvs(size=x.shape)
+        noise = torch.randn_like(x)
         x_new = x + self._distribution.score(x) * dt + noise * (2.0 * dt) ** 0.5
         return x_new
 
-    def __call__(self, x: np.ndarray):
+    def __call__(self, x: torch.Tensor):
         return self.step(x, self._timestep)
 
 
-class MALAStep(Operator):
+class MALAStep(ScoreBasedOperator):
     def __init__(self, target_distribution, timestep: float):
         super().__init__(target_distribution)
         self._timestep = timestep
@@ -541,33 +585,35 @@ class MALAStep(Operator):
     def name(self):
         return f"MALAStep_target_dist={target_distribution.name}_dt={self._timestep}"
 
-    def step(self, x: np.ndarray, dt: float = None):
+    def step(self, x: torch.Tensor, dt: float = None):
         dt = self._timestep if dt is None else dt
-        noise = sp.stats.norm().rvs(size=x.shape)
+        noise = torch.randn_like(x)
         x_prop = x + self._distribution.score(x) * dt + noise * (2.0 * dt) ** 0.5
 
-        d_log_prob = self._distribution.log_density(
-            x_prop
-        ) - self._distribution.log_density(x)
+        d_log_prob = self._distribution.log_prob(x_prop) - self._distribution.log_prob(
+            x
+        )
         d_transition = (
-            np.linalg.norm(
+            torch.linalg.norm(
                 (x - x_prop - dt * self._distribution.score(x_prop)),
                 axis=-1,
             )
             ** 2
-            - 2.0 * dt * np.linalg.norm(noise, axis=-1) ** 2
+            - 2.0 * dt * torch.linalg.norm(noise, axis=-1) ** 2
         )
 
-        log_alpha = np.minimum(0, d_log_prob - d_transition / (4.0 * dt))
-        u = np.random.rand(x.shape[0])
-        is_accepted = np.log(u) <= log_alpha
-        acceptance_rate = is_accepted.mean()
-        x_new = np.where(is_accepted[:, np.newaxis], x_prop, x)
+        log_alpha = torch.minimum(
+            torch.zeros_like(d_log_prob), d_log_prob - d_transition / (4.0 * dt)
+        )
+        u = torch.rand(x.shape[0])
+        is_accepted = torch.log(u) <= log_alpha
+        acceptance_rate = is_accepted.to(torch.float).mean()
+        x_new = torch.where(is_accepted[:, None], x_prop, x)
 
         return x_new, acceptance_rate
 
     def tune(
-        self, x_init: np.ndarray, ar_target: float = 0.574, n_steps_tune: int = 50
+        self, x_init: torch.Tensor, ar_target: float = 0.574, n_steps_tune: int = 50
     ):
         ar_cur = [
             1.0,
@@ -577,7 +623,7 @@ class MALAStep(Operator):
             if _dt <= 0.0:
                 return 1.0 - ar_target
             ars = []
-            x_cur = x_init.copy()
+            x_cur = x_init
             for _ in range(n_steps_tune):
                 x_cur, ar = self.step(x_cur, _dt)
                 ars.append(ar)
@@ -601,7 +647,7 @@ class MALAStep(Operator):
 
         self._timestep = dt
 
-    def __call__(self, x: np.ndarray):
+    def __call__(self, x: torch.Tensor):
         return self.step(x, self._timestep)[0]
 
 
@@ -611,5 +657,5 @@ class Constant(Operator):
         self._n_subsample = n_subsample
         self._name = f"const_oper_target_dist={target_distribution.name}"
 
-    def __call__(self, x: np.ndarray):
-        return self._distribution.sample(self._n_subsample)
+    def __call__(self, x: torch.Tensor):
+        return self._distribution._sample(self._n_subsample)
