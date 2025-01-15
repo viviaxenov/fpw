@@ -14,7 +14,6 @@ import os
 import sys
 import pickle
 
-import emcee
 
 
 class _Meta(abc.ABC, GoogleDocstringInheritanceInitMeta):
@@ -150,6 +149,7 @@ class Distribution(metaclass=_Meta):
         Returns:
             torch.Tensor : array of shape `(N_samples, dim)` --- number of samples
         """
+        import emcee
         fname_h5, fname_pickle = self._get_sample_file_paths()
 
         load_ok = False
