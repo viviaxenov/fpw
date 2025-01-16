@@ -5,7 +5,6 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import ott
-import equinox
 
 # TODO: <<Real>> parallel transport + JAX
 # from .pt import parallel_transport
@@ -69,6 +68,8 @@ class RAMSolverJAX:
     def _operator_and_residual(self, x_cur: jnp.ndarray):
         x0 = x_cur
         x1 = self._operator(x_cur)
+
+
         geom = ott.geometry.pointcloud.PointCloud(x0, x1, epsilon=self._reg_sinkhorn)
         ot = ott.solvers.linear.sinkhorn.Sinkhorn()(
             ott.problems.linear.linear_problem.LinearProblem(geom)
