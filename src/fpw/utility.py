@@ -623,10 +623,10 @@ class MALAStep(ScoreBasedOperator):
             if _dt <= 0.0:
                 return 1.0 - ar_target
             ars = []
-            x_cur = x_init
+            x_cur = x_init.detach().clone()
             for _ in range(n_steps_tune):
                 x_cur, ar = self.step(x_cur, _dt)
-                ars.append(ar)
+                ars.append(ar.cpu().numpy())
             ar_mean = np.mean(ars)
             ar_cur[0] = ar_mean
             return ar_mean - ar_target
