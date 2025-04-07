@@ -45,7 +45,9 @@ def _get_cvxpylayer_lsq(dim: int, mk: int, gamma_bound: float):
     r = cp.Parameter(dim)
     obj = cp.Minimize(cp.sum_squares(R @ gamma - r))
     Gamma_bound = cp.Constant(gamma_bound)
-    prob = cp.Problem(obj, [cp.norm_inf(gamma) <= Gamma_bound])
+    constrs = [cp.norm_inf(gamma) <= Gamma_bound]
+    # constrs = [gamma >= 0., gamma <= 1. - 1e-16]
+    prob = cp.Problem(obj, constrs)
     cvxpylayer = CvxpyLayer(prob, [R, r], [gamma])
 
     return cvxpylayer

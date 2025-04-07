@@ -47,7 +47,8 @@ autodoc_mock_imports = [
     "geomloss",
     "jax",
     "ott",
-    "ot"
+    "ot",
+    "emcee",
 ]
 autodoc_typehints = "description"
 

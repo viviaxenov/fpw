@@ -1,0 +1,34 @@
+{
+    "scaling": 0.01,
+    "N_steps": 100,
+    "r_min": 1e-6,
+    "operator_type": "dW_KL",
+    "vt_kind": "one-step",
+    "targets": {
+        "dim": [2, 5],
+        "sigma_min": [0.1, 1.0],
+        "sigma_max": 5.0,
+        "rs": [1, 10]
+    },
+    "methods": {
+        "RGD": {
+            "N_steps": 100
+        },
+        "RCG": {
+            "N_steps": 60
+        },
+        "BWRAM": {
+            "history_len": [
+                1,
+                2,
+                5,
+                10
+            ],
+        "l_inf_bound_Gamma": 2.0
+        },
+        "Picard": {
+            "N_steps": 100
+        }
+    },
+    "plot": true
+}

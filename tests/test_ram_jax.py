@@ -25,6 +25,28 @@ def S2_dist_fn(x0, x1, reg_sinkhorn=0.03):
     return out[0]
 
 
+def W2_gaussian(x0: jnp.array, x1: jnp.array, device="gpu"):
+    """
+    Assuming x0, x1 are samples from Gaussian distributions and have the shape
+    [N_samples, dimension], compute the (Bures)-Wasserstein distance between them
+    """
+    m0, m1 = x0.mean(axis=0), x1.mean(axis=0)
+    cov0, cov1 = jnp.cov(x0, rowvar=False), jnp.cov(x1, rowvar=False)
+    if device == "cpu":
+        sqrt_cov0 = jsp.linalg.sqrtm(cov0).real
+        K = jsp.linalg.sqrtm(sqrt_cov0 @ cov1 @ sqrt_cov0).real
+    else:
+        # there is no GPU implementation of matrix sqrt so have to put to CPU
+        cov0, cov1 = np.array(cov0), np.array(cov1)
+        sqrt_cov0 = sp.linalg.sqrtm(cov0).real
+        K = sp.linalg.sqrtm(sqrt_cov0 @ cov1 @ sqrt_cov0).real
+        cov0, cov1, K = jnp.array(cov0), jnp.array(cov1), jnp.array(K)
+
+    dsq = jnp.trace(cov0 + cov1 - 2.0 * K) + ((m0 - m1) ** 2).sum()
+
+    return dsq
+
+
 def get_lpr_and_score_fn_gaussian(m: jnp.ndarray, sigma: jnp.ndarray):
     psq = np.linalg.inv(sigma)
     psq = jnp.array(psq)
@@ -71,19 +93,22 @@ def mala_step(
 rs = 10
 N_particles = 200
 dim = 2
-N_steps = 100
+N_steps = 500
 hist_lens = [1, 2, 5, 10, 15][:3]
 
 key = jax.random.PRNGKey(rs)
 
 if dim == 2:
     sigma = np.array([[1.0, 0.8], [0.8, 1.0]])
-    m = np.array([10.0, 4.0]) * 0.0
+    m = np.array([10.0, 4.0]) 
 else:
     U = sp.stats.ortho_group.rvs(dim, random_state=rs)
     sigma = np.diag([1.0 - 0.9 * 0.8**n for n in range(dim)])
     sigma = U.T @ sigma @ U
-    m = sp.stats.uniform.rvs(size=dim, random_state=rs) * 0.0
+    m = sp.stats.uniform.rvs(size=dim, random_state=rs)
+
+# W2_dist_fn = jax.jit(partial(W2_gaussian, device='cpu'))
+W2_dist_fn = S2_dist_fn
 
 key, split = jax.random.split(key)
 sample_targ = jax.random.multivariate_normal(
@@ -97,7 +122,7 @@ print(sample_init.shape, sample_targ.shape)
 lpr, score = get_lpr_and_score_fn_gaussian(m, sigma)
 S2_errs_mala = []
 acceptance_rates = []
-timesteps = np.linspace(0.1, 1.1, 21, endpoint=True)
+timesteps = np.linspace(0.01, .1, 21, endpoint=True)
 
 ar_means = []
 logS2_rates = []
@@ -108,7 +133,7 @@ for dt in timesteps:
     S2_err = []
     ars = []
     for _ in range(N_steps):
-        S2_err.append(S2_dist_fn(sample_mala, sample_targ))
+        S2_err.append(W2_dist_fn(sample_mala, sample_targ))
         key, split = jax.random.split(key)
         sample_mala, ar, key = mala_step(sample_mala, dt, lpr, score, split)
         ars.append(ar)
@@ -163,13 +188,13 @@ for m_history in hist_lens:
         operator,
         sample_init.copy(),
         history_len=m_history,
-        relaxation=0.8,
+        relaxation=1.,
         reg_sinkhorn=0.01,
         sinkhorn_kwargs={"scaling": 0.3},
     )
     for k in range(N_steps):
         sample_ram = solver._x_prev
-        S2_err_ram.append(S2_dist_fn(sample_ram, sample_targ))
+        S2_err_ram.append(W2_dist_fn(sample_ram, sample_targ))
         solver._step()
     S2_convs.append(S2_err_ram)
 

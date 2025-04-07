@@ -28,10 +28,10 @@ fpw.pt module
    :undoc-members:
    :show-inheritance:
 
-fpw.ram module
---------------
+fpw.utility module
+------------------
 
-.. automodule:: fpw.ram
+.. automodule:: fpw.utility
    :members:
    :undoc-members:
    :show-inheritance:

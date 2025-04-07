@@ -1,0 +1,26 @@
+{
+    "N_steps": 200,
+    "operator_type": "Barycenter",
+    "vt_kind": "one-step",
+    "n_sigmas": 10,
+    "targets": {
+        "dim": 200,
+        "sigma_min": [
+            0.01
+        ],
+        "sigma_max": 0.9,
+        "rs": 1
+    },
+    "methods": {
+        "Picard": {
+            "N_steps": 50,
+            "r_min": 1e-6
+        },
+        "BWRAM": {
+            "history_len": [1,2,3,4,5],
+            "l_inf_bound_Gamma": [1.0]
+        }
+    },
+    "plot": true,
+    "output_dir": "./outputs/barycenter"
+}

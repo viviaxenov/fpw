@@ -1,0 +1,8 @@
+# Ignore everything
+/*
+
+# But allow JSON files in exact root
+!/*.json
+
+# Keep .gitignore
+!/.gitignore

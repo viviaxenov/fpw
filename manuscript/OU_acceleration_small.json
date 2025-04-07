@@ -1,0 +1,24 @@
+{
+    "dt": 0.20, 
+    "operator_type": "OU",
+    "N_steps": 200,
+    "r_min": 1e-6,
+    "vt_kind": "one-step",
+    "targets": {
+        "dim": [2,4,8,16,32],
+        "sigma_min": 0.5,
+        "sigma_max": [1.0, 5.0, 10.0],
+        "rs": [1,2,3,4]
+    },
+    "methods": {
+        "Picard": {
+            "N_steps": 10000
+        },
+        "BWRAM": {
+            "history_len": [1,2,3,4,5,6],
+        "l_inf_bound_Gamma": 1.0
+        }
+    },
+    "plot": true,
+    "output_dir": "./outputs/OU_acceleration_small"
+}

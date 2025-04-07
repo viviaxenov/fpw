@@ -1,0 +1,61 @@
+{
+    "scaling": 0.1,
+    "operator_type": "dW_KL",
+    "N_steps": 100,
+    "KL_min": 1e-10,
+    "vt_kind": "one-step",
+    "targets": {
+        "dim": [
+            4,
+            8,
+            16,
+            32,
+            64,
+            128,
+            256
+        ],
+        "sigma_min": 0.2,
+        "sigma_max": [
+            1.0,
+            5.0,
+            10.0,
+            20.0
+        ],
+        "rs": [
+            1,2,3,4,5,6
+        ]
+    },
+    "methods": {
+        "Picard": {
+            "N_steps": 1000
+        },
+        "RGD": {
+            "r_min": 1e-12
+        },
+        "RCG": {
+            "r_min": 1e-12
+        },
+        "BWRAM": {
+            "history_len": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15
+            ],
+            "l_inf_bound_Gamma": 2.5
+        }
+    },
+    "plot": true,
+    "output_dir": "./outputs/KL_acceleration"
+}
