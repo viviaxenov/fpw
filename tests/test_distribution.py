@@ -3,6 +3,10 @@ from fpw.utility import *
 import matplotlib.pyplot as plt
 import corner
 
+import torch
+
+torch.set_default_dtype(torch.float64)
+
 
 # thetas = torch.Tensor([i*2.*torch.pi/5. for i in range(5)])
 # ms = torch.stack((torch.cos(thetas), torch.sin(thetas)), axis=-1)
@@ -36,8 +40,6 @@ plt.scatter(*xr.T, label="Ref.")
 plt.legend()
 plt.show()
 
-
-exit()
 
 s = d.sample(N_samples=1000, run_mcmc=True)
 s = d.sample(N_samples=2000, run_mcmc=True)
