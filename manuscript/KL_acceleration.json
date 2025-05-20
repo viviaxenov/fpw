@@ -1,61 +1,27 @@
 {
-    "scaling": 0.1,
-    "operator_type": "dW_KL",
-    "N_steps": 100,
-    "KL_min": 1e-10,
-    "vt_kind": "one-step",
-    "targets": {
-        "dim": [
-            4,
-            8,
-            16,
-            32,
-            64,
-            128,
-            256
-        ],
-        "sigma_min": 0.2,
-        "sigma_max": [
-            1.0,
-            5.0,
-            10.0,
-            20.0
-        ],
-        "rs": [
-            1,2,3,4,5,6
-        ]
-    },
-    "methods": {
-        "Picard": {
-            "N_steps": 1000
-        },
-        "RGD": {
-            "r_min": 1e-12
-        },
-        "RCG": {
-            "r_min": 1e-12
-        },
-        "BWRAM": {
-            "history_len": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-                8,
-                9,
-                10,
-                11,
-                12,
-                13,
-                14,
-                15
-            ],
-            "l_inf_bound_Gamma": 2.5
+    "problems": {
+        "dW_KL": {
+            "scaling": 0.4,
+            "dim": [4, 8, 16, 32, 64],
+            "sigma_min": 0.5,
+            "sigma_max": [1.0, 5.0, 10.0, 20.0],
+            "rs": [1,2,3,4,5,6]
         }
     },
-    "plot": true,
+    "methods": {
+        "BWRAM": {
+            "history_len": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
+            "l_inf_bound_Gamma": [ 1.5,  10.0],
+            "relaxation": [ 0.9, 1.0, 1.2],
+            "N_steps_max": 200
+        },
+        "RGD": {"N_steps_max": 200},
+        "RCG": {"N_steps_max": 200}
+    },
+    "N_steps_max": 1000,
+    "vt_kind": "one-step",
+    "r_min": 1e-5,
+    "cost_min": 1e-10,
+    "plot": false,
     "output_dir": "./outputs/KL_acceleration"
 }

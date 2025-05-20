@@ -16,9 +16,9 @@ from fpw.PymanoptInterface import *
 from fpw.utility import *
 
 
-dim = 50
-n_sigmas = 20
-n_data = 100
+dim = 2
+n_sigmas = 5
+n_data = 3
 N_steps_max = 200
 
 
@@ -28,6 +28,8 @@ n_same_as_pot = 0
 for n_run in range(n_data):
     dists = []
     operator = OperatorBarycenter(n_sigmas=n_sigmas, dim=dim, rs=n_run)
+    for _k, _sig in enumerate(operator._sigmas):
+        operator._sigmas[_k] += 0.2 * np.eye(dim)
 
     cov_init = np.eye(dim)
     cov_cur = cov_init.copy()
@@ -89,10 +91,15 @@ t = np.linspace(
 X0 = np.stack((np.cos(t), np.sin(t)), axis=0)
 X_bc = sp.linalg.sqrtm(cov_cur)[:2, :2] @ X0
 ax.plot(*X_bc)
+
 for k, Sigma in enumerate(operator._sigmas):
     phi = k / n_sigmas * (2.0 * np.pi)
     shift = np.stack((r_vis * np.sin(phi), r_vis * np.cos(phi)), axis=0)
     sq_Sigma = sp.linalg.sqrtm(Sigma)
     X_cur = shift[:, np.newaxis] + (sq_Sigma[:2, :2] @ X0)
-    plt.plot(*X_cur)
+    ax.plot(*X_cur)
+
+ax.xaxis.set_visible(False)
+ax.yaxis.set_visible(False)
+
 plt.show()

@@ -3,6 +3,7 @@
 
 # But allow JSON files in exact root
 !/*.json
+!/*.ipynb
 
 # Keep .gitignore
 !/.gitignore

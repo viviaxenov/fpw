@@ -1,22 +1,25 @@
 {
-    "scaling": 0.01,
-    "N_steps": 100,
-    "r_min": 1e-6,
-    "operator_type": "dW_KL",
-    "vt_kind": "one-step",
-    "targets": {
-        "dim": [2, 5],
-        "sigma_min": [0.1, 1.0],
-        "sigma_max": 5.0,
-        "rs": [1, 10]
+    "problems": {
+        "Barycenter": {
+            "dim": [50],
+            "n_sigmas": [2,5, 10, 25, 50]
+        },
+        "dW_KL": {
+            "dim": [2, 3, 5, 10],
+            "sigma_min": 0.5,
+            "sigma_max": [1.0, 5.0, 10.0],
+            "scaling": 1.0
+        },
+        "OU": {
+            "dim": [2, 3, 5, 10],
+            "sigma_min": 0.5,
+            "sigma_max": [1.0, 5.0, 10.0],
+            "dt": 2.0
+        }
     },
     "methods": {
-        "RGD": {
-            "N_steps": 100
-        },
-        "RCG": {
-            "N_steps": 60
-        },
+        "RGD": {},
+        "RCG": {},
         "BWRAM": {
             "history_len": [
                 1,
@@ -25,10 +28,11 @@
                 10
             ],
         "l_inf_bound_Gamma": 2.0
-        },
-        "Picard": {
-            "N_steps": 100
         }
     },
-    "plot": true
+    "vt_kind": "one-step",
+    "r_min": 1e-8,
+    "N_steps_max": 20,
+    "plot": true,
+    "output_dir": "./debug"
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 
-from typing import List, Dict
+from typing import List, Dict, Union
 
 import numpy as np
 import scipy as sp
@@ -30,151 +30,57 @@ import pickle
 
 
 from fpw import BWRAMSolver, dBW
-from fpw.BWRAMSolver import OperatorWG, OperatorOU, OperatorBarycenter
+from fpw.BWRAMSolver import BWRAMSolver
+from fpw.ProblemGaussian import *
 from fpw.PymanoptInterface import *
-from fpw.utility import *
+
+import num2tex
 
 
-def _get_operator(
-    cov_target: np.ndarray,
-    operator_type: Union["dW_KL", "OU", "Barycenter"],
-    dt=0.17,
-    scaling=0.1,
-    **kwargs,
-):
-
-    match operator_type:
-        case "dW_KL":
-            return OperatorWG(cov_target, scaling)
-        case "OU":
-            return OperatorOU(cov_target, dt)
-        case "Barycenter":
-            return OperatorBarycenter(
-                cov_target,
-                **kwargs,
-            )
-        case _:
-            raise RuntimeError("Operator type not recognized")
-
-
-def _run_test_Picard(
-    cov_target: np.ndarray,
-    N_steps: int,
-    operator_type: Union["dW_KL", "OU"],
-    r_min=1e-6,
-    KL_min=-1.0,
-    dt=0.17,
-    scaling=0.1,
-    **kwargs,
-):
-    dim = cov_target.shape[0]
-    operator = _get_operator(cov_target, operator_type, **kwargs)
-
-    r_stopping = r_min * scaling if operator_type == "dW_KL" else r_min
-
-    def KL(cov, cov_target):
-        Sigma_1_inv_at_Sigma = np.linalg.solve(cov_target, cov)
-        return 0.5 * (
-            np.trace(Sigma_1_inv_at_Sigma)
-            + np.log(np.linalg.det(cov_target))
-            - np.log(np.linalg.det(cov))
-            - dim
-        )
-
-    BW2_err = []
-    KL_err = []
-    residuals = []
-    dts = []
-
-    cov_init = operator._sigmas[0] if operator_type == "Barycenter" else np.eye(dim)
-    cov_init = np.eye(dim)
-    cov_cur = cov_init
-
-    for k in range(N_steps):
-        cov_prev = cov_cur.copy()
-        cov_cur = operator(cov_cur)
-
-        BW2_err.append(dBW(cov_prev, cov_target))
-        KL_err.append(KL(cov_prev, cov_target))
-        residuals.append(dBW(cov_cur, cov_prev))
-
-        if residuals[-1] <= r_stopping:
-            break
-        if KL_err[-1] <= KL_min:
-            break
-
-    match operator_type:
-        case "dW_KL":
-            results = dict(scaling=operator.scaling)
-        case "OU":
-            results = dict(dt=operator.dt)
-        case "Barycenter":
-            results = dict(n_sigmas=operator.n_sigmas)
-
-    results["operator"] = operator.name
-    results["N_steps_max"] = N_steps
-    results["N_steps_done"] = k
-    results["BW2_err"] = np.array(BW2_err)
-    results["KL_err"] = np.array(KL_err)
-    residuals = np.array(residuals)
-    residuals = residuals / scaling if operator_type == "dW_KL" else residuals
-    results["residuals"] = residuals
-    results["dts"] = np.array(dts)
-    results["cov_final"] = cov_cur
-
-    return results
+_max_corner_dim = 5
 
 
 def _run_test_BWRAM(
-    cov_target: np.ndarray,
-    N_steps: int,
-    operator_type: Union["dW_KL", "OU"],
-    # dt=0.17,
-    # scaling=0.1,
-    r_min=1e-6,
-    KL_min=None,
+    problem: Problem,
+    N_steps_max: int,
+    N_warmstart: int = 0,
+    r_min=1e-10,
+    cost_min: np.float64 = -np.inf,
     **kwargs,
 ):
-    # save all passed args, including defa
 
-    dim = cov_target.shape[0]
-    operator = _get_operator(cov_target, operator_type, **kwargs)
-    r_stopping = r_min * scaling if operator_type == "dW_KL" else r_min
+    residuals = []
+    covs = []
+    dts = []
+    if problem.has_cost:
+        costs = []
 
-    # cov_init = operator._sigmas[0] if operator_type == "Barycenter" else np.eye(dim)
-    cov_init = np.eye(dim)
+    cov_init = problem.get_initial_value()
+    if N_warmstart > 0 and hasattr(problem, "covs_ref"):
+        if N_warmstart < len(problem.covs_ref):
+            cov_init = problem.covs_ref[N_warmstart]
+        else:
+            warnings.warn("Incorrect value for warmstart")
 
-    def KL(cov, cov_target):
-        Sigma_1_inv_at_Sigma = np.linalg.solve(cov_target, cov)
-        return 0.5 * (
-            np.trace(Sigma_1_inv_at_Sigma)
-            + np.log(np.linalg.det(cov_target))
-            - np.log(np.linalg.det(cov))
-            - dim
-        )
-
-    BW2_err = []
-    KL_err = []
+    covs = []
     residuals = []
     dts = []
 
-    valid_params = inspect.signature(BWRAMSolver).parameters.keys()
-    kwargs_solver = {k: v for k, v in kwargs.items() if k in valid_params}
-    solver = BWRAMSolver(operator, **kwargs_solver)
+    solver = BWRAMSolver(problem, **kwargs)
     solver._initialize_iteration(cov_init)
-    for k in range(N_steps):
+    for k in range(N_steps_max):
         cov_ram = solver._x_prev
         residual_ram = solver._r_prev
 
-        BW2_err.append(dBW(cov_ram, cov_target))
-        KL_err.append(KL(cov_ram, cov_target))
-        residuals.append(np.sqrt(np.trace(residual_ram @ cov_ram @ residual_ram)))
-
-        if residuals[-1] <= r_stopping:
-            break
-        if KL_min is not None:
-            if KL_err[-1] <= KL_min:
+        # covs.append(cov_ram)
+        residuals.append(problem.base_manifold.norm(cov_ram, residual_ram))
+        if problem.has_cost:
+            costs.append(problem.cost(cov_ram))
+            if costs[-1] <= cost_min:
                 break
+
+        if residuals[-1] <= r_min:
+            break
 
         try:
             t = perf_counter()
@@ -186,24 +92,13 @@ def _run_test_BWRAM(
             print(f"\tError: {e}")
             break
 
-    results = kwargs_solver.copy()
-
-    match operator_type:
-        case "dW_KL":
-            results.pop("dt", None)
-        case "OU":
-            results.pop("scaling", None)
-
-    results["N_steps_max"] = N_steps
-    results["N_steps_done"] = k
-    results["BW2_err"] = np.array(BW2_err)
-    results["KL_err"] = np.array(KL_err)
-    residuals = np.array(residuals)
-    residuals = residuals / scaling if operator_type == "dW_KL" else residuals
+    results = dict()
     results["residuals"] = residuals
     results["dts"] = np.array(dts)
-    results["cov_final"] = solver._x_cur
-    results["operator"] = operator.name
+    results["covs"] = covs
+    results["cov_final"] = cov_ram
+    if problem.has_cost:
+        results["costs"] = costs
 
     return results
 
@@ -224,39 +119,33 @@ _defaults = dict(
 
 
 def _run_test_Riemannian_minimization(
-    cov_target: np.ndarray,
-    N_steps: int,
+    problem: Problem,
+    N_steps_max: int,
     method: Union["RCG", "RGD"],
-    vt_kind="one-step",
-    scaling=1.0,
-    r_min=1e-6,
+    N_warmstart: int = 0,
+    r_min=1e-10,
+    cost_min: np.float64 = -np.inf,
     **kwargs,
 ):
-
-    dim = cov_target.shape[0]
-    # cov_init = operator._sigmas[0] if operator_type == "Barycenter" else np.eye(dim)
-    cov_init = np.eye(dim)
-    Sigma_1 = torch.Tensor(cov_target)
-
-    BW_manifold = BuresWassersteinManifold(dim, pt_type=vt_kind)
-
-    @pymanopt.function.pytorch(BW_manifold)
-    def KL(
-        Sigma,
-    ):
-        Sigma_1_inv_at_Sigma = torch.linalg.solve(Sigma_1, Sigma)
-        return (
-            0.5
-            * scaling
-            * (
-                torch.trace(Sigma_1_inv_at_Sigma)
-                + torch.log(torch.linalg.det(Sigma_1))
-                - torch.log(torch.linalg.det(Sigma))
-                - dim
+    if not hasattr(problem, "get_cost_torch"):
+        raise ValueError("Cannot use Riemannian optimization w.o. toch cost")
+    cov_init = problem.get_initial_value()
+    if N_warmstart > 0 and hasattr(problem, "covs_ref"):
+        if len(problem.covs_ref) > 0:
+            if N_warmstart < len(problem.covs_ref):
+                cov_init = problem.covs_ref[N_warmstart]
+            else:
+                warnings.warn("Incorrect value for warmstart")
+        else:
+            warnings.warn(
+                "Reference covariances were not written, warmstart not possible"
             )
-        )
 
-    problem = pymanopt.Problem(BW_manifold, KL)
+    BW_manifold = problem.base_manifold
+
+    cost_torch = pymanopt.function.pytorch(BW_manifold)(problem.get_cost_torch())
+
+    _problem = pymanopt.Problem(BW_manifold, cost_torch)
 
     opt_factory = (
         pymanopt.optimizers.SteepestDescent
@@ -267,66 +156,49 @@ def _run_test_Riemannian_minimization(
     valid_params = inspect.signature(opt_factory).parameters.keys()
     kwargs_solver = {k: v for k, v in kwargs.items() if k in valid_params}
     kwargs_solver = _Riemannian_defaults | kwargs_solver
-    kwargs_solver["max_iterations"] = N_steps
-    kwargs_solver["min_gradient_norm"] = r_min * scaling
+    kwargs_solver["max_iterations"] = N_steps_max
+    kwargs_solver["min_gradient_norm"] = r_min
     optimizer = opt_factory(
         **kwargs_solver,
     )
     try:
-        opt_result = optimizer.run(problem, initial_point=cov_init)
+        opt_result = optimizer.run(_problem, initial_point=cov_init)
     except (ValueError, RuntimeWarning):
-        print(f"{dim=} {scaling=} {method=} {vt_kind=}")
-        print(cov_target)
         raise
 
-    BW2_err = [dBW(cov, cov_target) for cov in opt_result.log["iterations"]["point"]]
-    KL_err = np.array(opt_result.log["iterations"]["cost"]) / scaling
-    residuals = np.array(opt_result.log["iterations"]["gradient_norm"]) / scaling
+    covs = opt_result.log["iterations"]["point"]
+    residuals = np.array(opt_result.log["iterations"]["gradient_norm"])
+    costs = opt_result.log["iterations"]["cost"]
+
     dts = np.array(opt_result.log["iterations"]["time"])
     dts = dts[1:] - dts[:-1]
-    results = kwargs_solver.copy()
 
-    results["N_steps_max"] = N_steps
-    results["N_steps_done"] = len(BW2_err)
-    results["BW2_err"] = np.array(BW2_err)
-    results["KL_err"] = KL_err
+    results = dict()
+    # results["covs"] = covs
+    results["covs"] = []
     results["residuals"] = residuals
     results["dts"] = dts
-    results["cov_final"] = opt_result.point
+    results["cov_final"] = covs[-1]
+    results["costs"] = costs
 
     return results
 
 
+_problem_name_to_fn = {
+    "Barycenter": Barycenter,
+    "EntBC": EntropicBarycenter,
+    "Median": Median,
+    "OU": OUEvolution,
+    "dW_KL": WGKL,
+}
 _method_name_to_fn = {
     "BWRAM": _run_test_BWRAM,
     "RGD": _run_test_Riemannian_minimization,
     "RCG": _run_test_Riemannian_minimization,
-    "Picard": _run_test_Picard,
 }
 
 
-def _get_target(
-    dim=2,
-    sigma_min=0.5,
-    sigma_max=5.0,
-    rs=10,
-    **kwargs,
-):
-    target_data = dict(
-        dim=dim,
-        sigma_min=sigma_min,
-        sigma_max=sigma_max,
-        rs_cov=rs,
-    )
-    ortho = sp.stats.ortho_group.rvs(dim=dim, random_state=rs)
-    sigmas = np.diag(np.linspace(sigma_min, sigma_max, dim, endpoint=True))
-    cov_target = ortho.T @ sigmas @ ortho
-
-    return cov_target, target_data
-
-
 def _run_experiment(**kwargs):
-
     args_used = kwargs.copy()
     kwargs = _defaults | kwargs
     cov_target, target_data = _get_target(**kwargs)
@@ -339,30 +211,30 @@ def _run_experiment(**kwargs):
     return run_res, args_used
 
 
-def _cycler_from_dict(d: dict) -> cycler:
-    cs = [
-        cycler(**{key: (val if isinstance(val, list) else [val])})
-        for key, val in d.items()
-    ]
-    return reduce(mul, cs)
+def _parse_dict(d: dict, name: str) -> cycler:
+    d = d[name]
+    res = []
+    for entry_name, entry_dict in d.items():
+        cs = [
+            cycler(**{key: (val if isinstance(val, list) else [val])})
+            for key, val in entry_dict.items()
+        ]
+        cs.append(cycler(**{name[:-1]: [entry_name]}))
+        cycler_all = reduce(mul, cs)
+
+        res += list(cycler_all)
+
+    return res
 
 
-def _expand_config(config: dict):
-    if isinstance(config, list):
-        return config
-    config = config.copy()
-    config.pop("output_dir", None)
-    config.pop("plot", None)
+def _parse_config(config: dict):
+    default_dirname = f"./outputs/{datetime.now():%Y_%b_%d__%X}"
+    dirname = config.pop("output_dir", default_dirname)
+    plot = config.pop("plot", False)
+    n_max_plot = config.pop("n_max_plot", 0)
 
-    cycler_targets = _cycler_from_dict(config["targets"])
-    cyclers_methods = [
-        _cycler_from_dict(mtd_dict) * cycler(method=[method])
-        for method, mtd_dict in config["methods"].items()
-    ]
-
-    cycler_methods = [cycler_targets * c for c in cyclers_methods]
-
-    expanded_conf = reduce(concat, [[x for x in c] for c in cycler_methods])
+    kws_problems = _parse_dict(config, "problems")
+    kws_methods = _parse_dict(config, "methods")
 
     # if there are no specific values for these params,  look for them at the higher level of config and update
     # only passing down 'scalar' values
@@ -370,13 +242,12 @@ def _expand_config(config: dict):
     for param, val in config.items():
         if isinstance(val, (list, dict)):
             continue
-        for rec in expanded_conf:
+        for rec in kws_problems:
+            rec[param] = rec.get(param, val)
+        for rec in kws_methods:
             rec[param] = rec.get(param, val)
 
-    ig = itemgetter("dim", "sigma_min", "sigma_max", "rs")
-    expanded_conf.sort(key=ig)
-
-    return expanded_conf
+    return kws_problems, kws_methods, dirname, plot, n_max_plot
 
 
 def _group_by_keys(data: List[Dict], *key_names):
@@ -392,161 +263,210 @@ def _group_by_keys(data: List[Dict], *key_names):
 _methods_colors = dict(Picard="blue", BWRAM="green", RCG="red", RGD="orange")
 _methods_palettes = dict(Picard="Blues", BWRAM="Greens", RCG="Reds", RGD="Oranges")
 _methods_lineprops = dict(
-    Picard=dict(linestyle="--", linewidth=2.5),
-    BWRAM=dict(linestyle="-", linewidth=0.7),
+    Picard=dict(linestyle="--", linewidth=2.9),
+    BWRAM=dict(linestyle="-", linewidth=1.0),
     RCG=dict(linestyle=":", linewidth=1.5),
     RGD=dict(linestyle="-.", linewidth=1.5),
 )
-_max_plot_dim = 5
 
 
 def _get_legend(rec: Dict):
     match rec["method"]:
         case "Picard":
-            return f"{rec['operator']}"
+            return "Picard"
         case "BWRAM":
-            return f"{rec['operator']}+BWRAM, m = {rec['history_len']}"
+            label = f"BWRAM, $m = {rec['history_len']},\\ \\|\\Gamma\\|_{{l_\\infty}} \\leq {num2tex.num2tex(rec['l_inf_bound_Gamma'])}"
+            if "r_threshold" in rec:
+                label = f"q_{{rest}} = {rec['r_threshold']:.1e}"
+
+            label += "$"
+            return label
         case "RGD" | "RCG":
             return rec["method"]
 
 
-def _plot_one_target(target_params: dict, data: List[Dict]):
+def _get_style(rec: Dict):
+    style = _methods_lineprops[rec["method"]]
+    label = _get_legend(rec)
+    color = _methods_colors[rec["method"]]
+    if rec["method"] == "BWRAM":
+        m = rec["history_len"]
+        palette = _methods_palettes[rec["method"]]
+        color = colormaps.get_cmap(palette)((m + 5) / (15 + 5))
 
+    return style | dict(label=label, color=color)
+
+
+_key_to_ylabel = dict(
+    residuals=r"$\|r_k\|_{\Sigma_k}$",
+    costs=r"$V(\Sigma_k)$",
+    costs_to_0=r"$V(\Sigma_k) - V(\Sigma_*)$",
+    dBW=r"$W^2_2(\Sigma_k, \Sigma_*)$",
+)
+
+
+def _plot_figure(
+    problem: Problem,
+    rp: List[dict],
+    dirname_plots: str,
+    key: str = "residuals",
+    n_max_plot=5,
+    **kwargs,
+):
     fig: plt.Figure
-    axs: List[plt.Axes]
-    fig, axs = plt.subplots(1, 3, figsize=(30, 10))
-    groups = _group_by_keys(data, "method")
-    for method, group in groups:
-        cmap = colormaps.get_cmap(_methods_palettes[method])
-        for k, rec in enumerate(group):
-            legend_text = _get_legend(rec)
-            color = cmap((k + 2) / (len(group) + 2))
+    ax: plt.Axes
 
-            axs[0].plot(
-                rec["residuals"],
-                color=color,
-                **_methods_lineprops[method],
-                label=legend_text,
+    # Plot residuals
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    fig.suptitle(problem.name)
+    v_min, k_min = np.inf, 0
+    dirname_cur = os.path.join(dirname_plots, key)
+    os.makedirs(dirname_cur, exist_ok=True)
+
+    rp.sort(key=lambda _r: 0 if _r["method"] != "BWRAM" else len(_r["residuals"]))
+    r_to_plot = rp[:n_max_plot]
+
+    def _pretty_sorting(rec: dict):
+        match rec["method"]:
+            case "Picard":
+                return 0
+            case "RGD":
+                return 1
+            case "RCG":
+                return 2
+            case "BWRAM":
+                return 2 + rec['history_len']
+
+    r_to_plot.sort(key=_pretty_sorting)
+
+    for res in r_to_plot:
+        plot_name = os.path.join(dirname_cur, f"{problem.name}.pdf")
+        val = res[key]
+
+        k_cur_min = np.argmin(np.array(val))
+        v_cur_min = val[k_cur_min]
+
+        if v_cur_min < v_min:
+            v_min, k_min = v_cur_min, k_cur_min
+
+        n0 = res.get("N_warmstart", 0)
+        iters = range(n0, n0 + len(val))
+        ax.plot(iters, val, **_get_style(res))
+
+    ax.set_yscale("log")
+    ax.set_xlim(left=0, right=len(rp[0][key]))
+    # ax.set_ylim(bottom=v_min)
+    ax.set_xlabel("iteration")
+    ax.set_ylabel(_key_to_ylabel[key])
+    ax.legend(fontsize=14)
+    ax.grid()
+
+    fig.savefig(plot_name)
+    return fig
+
+
+def _plot_problem(problem: Problem, rp: List[dict], dirname_plots: str, n_max_plot=0):
+    _plot_figure(problem, rp, dirname_plots, "residuals", n_max_plot=n_max_plot)
+
+    if problem.has_cost:
+        # Plot convergence of the cost functional
+        _plot_figure(problem, rp, dirname_plots, "costs", n_max_plot=n_max_plot)
+        pass
+        # plot_name = os.path.join(dirname_plots, f"cost_{problem_name}.pdf")
+        # fig.savefig(plot_name)
+
+    if hasattr(problem, "target"):
+        # for res in rp:
+        #     res["dBW"] = [dBW(Cov, problem.target) for Cov in res["covs"]]
+        # _plot_figure(problem, rp, dirname_plots, "dBW", n_max_plot=n_max_plot)
+        if problem.has_cost:
+            cost_ref = problem.cost(problem.target)
+            for res in rp:
+                res["costs_to_0"] = [c - cost_ref for c in res["costs"]]
+            _plot_figure(
+                problem, rp, dirname_plots, "costs_to_0", n_max_plot=n_max_plot
             )
-            axs[1].plot(
-                rec["KL_err"],
-                color=color,
-                **_methods_lineprops[method],
-                label=legend_text,
-            )
-            axs[2].plot(
-                rec["BW2_err"],
-                color=color,
-                **_methods_lineprops[method],
-                label=legend_text,
-            )
 
-    axs[0].set_title(r"$\|r_k\|_{\Sigma_k}$")
-    axs[1].set_title(r"$KL({\Sigma_k}|\Sigma_\infty)$")
-    axs[2].set_title(r"$W^2_2({\Sigma_k}|\Sigma_\infty)$")
-
-    for ax in axs:
-        ax.set_yscale("log")
-        ax.set_xlabel("$k$")
-        ax.grid()
-    ax.legend()
-
-    fig.suptitle(
-        "$d = {0},\\ \\sigma_{{min}} = {1:.1f},\\ \\sigma_{{max}} = {2:.1f}$".format(
-            *target_params
-        )
-    )
-
-    cov_target, _ = _get_target(*target_params)
-    sample_target = sp.stats.multivariate_normal(cov=cov_target).rvs(1000)[
-        :, :_max_plot_dim
-    ]
-    fig_corner = corner.corner(
-        sample_target, color="k", hist_kwargs=dict(density=True, label="Reference")
-    )
-
-    for method, group in groups:
-        res_best = min(group, key=lambda rec: min(rec["residuals"]))
-        cov_cur = res_best["cov_final"]
-        sample_cur = sp.stats.multivariate_normal(cov=cov_cur, allow_singular=True).rvs(
-            1000
-        )[:, :_max_plot_dim]
-        color = _methods_colors[method]
-        fig_corner = corner.corner(
-            sample_cur,
-            fig=fig_corner,
-            color=color,
-            hist_kwargs=dict(density=True, label=method),
-        )
-    plt.legend(loc="upper center", bbox_to_anchor=(0.5, 1.7))
-
-    fig_corner.suptitle(
-        "Target and approx. distribution "
-        + (
-            f"(first {_max_plot_dim} parameters)"
-            if cov_target.shape[0] > _max_plot_dim
-            else ""
-        )
-    )
-
-    return fig, fig_corner
-
-
-def _plot_each_target(results: List[Dict], output_dir: str):
-    group_by_target = _group_by_keys(results, "dim", "sigma_min", "sigma_max", "rs_cov")
-    ig = itemgetter("dim", "sigma_min", "sigma_max", "rs_cov")
-
-    for k, (group_data, group) in enumerate(group_by_target):
-        print(f"Plotting target {k+1}")
-        print(f"Target data: {group_data}", flush=True)
-        fig, fig_corner = _plot_one_target(group_data, group)
-
-        fig.savefig(os.path.join(output_dir, f"convergence_target_{k:02d}.pdf"))
-        fig_corner.savefig(os.path.join(output_dir, f"corner_target_{k:02d}.pdf"))
-
-        plt.close("all")
+    plt.close("all")
 
 
 def run_experiments(config: dict):
-    default_dirname = f"./tests/{datetime.now():%Y_%b_%d__%X}"
 
-    try:
-        dirname = config["output_dir"]
-    except (TypeError, KeyError):
-        dirname = default_dirname
-    try:
-        plot = config["plot"]
-    except (TypeError, KeyError):
-        plot = False
-
-    exp_config = _expand_config(config)
-
-    results, used_args = [], []
+    args_problems, args_methods, dirname, plot, n_max_plot = _parse_config(config)
     os.makedirs(dirname, exist_ok=True)
+
+    problems = []
+    results = []
+    results_by_problem = []
+
     with open(os.path.join(dirname, "config.json"), "w") as ofile:
         json.dump(config, ofile, indent=4)
 
-    for k, arguments in enumerate(tqdm(exp_config)):
-    # for k, arguments in enumerate(exp_config):
-        t = perf_counter()
-        res, args = _run_experiment(**arguments)
-        dt = t - perf_counter()
-        results.append(res)
-        used_args.append(args)
-        if dt > 1.0 or (k + 1) % 5 == 0 or k + 1 == len(arguments):
-            ig = itemgetter("dim", "sigma_min", "sigma_max", "rs_cov")
-            results.sort(key=ig)
+    dirname_chunks = os.path.join(dirname, "chunks")
+    os.makedirs(dirname_chunks, exist_ok=True)
+    dirname_plots = os.path.join(dirname, "plots")
+    os.makedirs(dirname_plots, exist_ok=True)
 
-            with open(os.path.join(dirname, "args.json"), "w") as ofile:
-                json.dump(used_args, ofile, indent=2)
+    n_total_runs = (len(args_methods) + 1) * len(args_problems)
+    with tqdm(total=n_total_runs) as pbar:
+        for k, kw_prob in enumerate(args_problems):
+            output_fname = os.path.join(dirname_chunks, f"p_{k+1}.pkl")
+            problem: Problem = _problem_name_to_fn[kw_prob["problem"]](**kw_prob)
+            problems.append(problem)
+            rp = []
 
-            with open(os.path.join(dirname, "res.pkl"), "wb") as ofile:
-                pickle.dump(results, ofile)
+            pbar.set_description(
+                f"Computing reference solution for problem {problem.name}"
+            )
+            res = problem.get_solution_picard(**kw_prob)
+            if hasattr(problem, "target"):
+                res["dBW"] = [dBW(Cov, problem.target) for Cov in res["covs"]]
+                if problem.has_cost:
+                    cost_ref = problem.cost(problem.target)
+                    res["costs_to_0"] = [c - cost_ref for c in res["costs"]]
+            else:
+                # If Picard didn't produce a reference solution, don't run other methods either
+                pbar.update(1 + len(args_methods))
+                continue
 
-    if plot:
-        dirname_plots = os.path.join(dirname, "plots")
-        os.makedirs(dirname_plots, exist_ok=True)
-        _plot_each_target(results, dirname_plots)
+
+            pbar.update(1)
+
+            res = res | kw_prob
+            res["method"] = "Picard"
+            results.append(res)
+            rp.append(res)
+
+            for kw_method in args_methods:
+                if kw_method["method"] in ["RGD", "RCG"] and not problem.has_cost:
+                    pbar.update(1)
+                    continue
+                method = _method_name_to_fn[kw_method["method"]]
+
+                pbar.set_description(
+                    f"Computing solution for problem {problem.name} with method {kw_method['method']}"
+                )
+                try:
+                    res = method(problem, **kw_method)
+                except (ValueError, RuntimeWarning, RuntimeError, AssertionError) as e:
+                    print(e)
+                    pbar.update(1)
+                    continue
+                pbar.update(1)
+
+                res = res | kw_method | kw_prob
+                if hasattr(problem, "target"):
+                    res["dBW"] = [dBW(Cov, problem.target) for Cov in res["covs"]]
+                    if problem.has_cost:
+                        cost_ref = problem.cost(problem.target)
+                        res["costs_to_0"] = [c - cost_ref for c in res["costs"]]
+                rp.append(res)
+
+            with open(output_fname, "wb") as ofile:
+                pickle.dump(rp, ofile)
+
+            if plot:
+                _plot_problem(problem, rp, dirname_plots, n_max_plot=n_max_plot)
 
 
 if __name__ == "__main__":
@@ -562,46 +482,9 @@ if __name__ == "__main__":
     input_file = args.input_file
 
     if args.replot:
-        if os.path.splitext(input_file)[1] == ".json":
-            with open(args.input_file, "r") as ifile:
-                config = json.load(ifile)
-            try:
-                output_dir = config["output_dir"]
-            except TypeError:
-                output_dir = os.path.dirname(input_file)
-        else:
-            output_dir = os.path.dirname(input_file)
-
-        res_file = os.path.join(output_dir, "res.pkl")
-        print(res_file)
-        with open(res_file, "rb") as ifile:
-            res = pickle.load(ifile)
-
-        _plot_each_target(res, os.path.join(output_dir, "plots"))
-        exit()
+        pass
 
     with open(args.input_file, "r") as ifile:
         config = json.load(ifile)
-
-    # config = {
-    #     "targets": {"dim": 2, "sigma_min": [1.0, 0.5, 0.1], "sigma_max": 5.0, "rs": 1},
-    #     "methods": {
-    #         "RGD": {"N_steps": 10, "scaling": 0.1},
-    #         "BWRAM": {
-    #             "history_len": [1, 2, 5, 10],
-    #             "N_steps": 10,
-    #             "operator_type": "dW_KL",
-    #             "scaling": 0.1,
-    #             "vt_kind": "one-step",
-    #         },
-    #         "Picard": {
-    #             "N_steps": 10,
-    #             "operator_type": "dW_KL",
-    #             "scaling": 0.1,
-    #         },
-    #     },
-    #     # "output_dir": "./many_sigma/",
-    #     "plot": True,
-    # }
 
     run_experiments(config)
