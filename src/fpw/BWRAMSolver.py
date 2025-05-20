@@ -460,7 +460,7 @@ class BWRAMSolver:
     def iterate(self, x0: torch.Tensor, max_iter: int, residual_conv_tol: np.float64):
         if self._k == 0:
             self._initialize_iteration(x0)
-        while torch.linalg.norm(self._r_prev) > residual_conv_tol:
+        while np.linalg.norm(self._r_prev) > residual_conv_tol:
             self._step()
             if self._k >= max_iter:
                 break
