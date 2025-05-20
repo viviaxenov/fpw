@@ -8,11 +8,12 @@ The goal is to accelerate the fixed-point iterations with Riemannian Anderson mi
 pip install --upgrade fpw@git+https://github.com/viviaxenov/fpw
 ```
 ### Requirements
+  - `cvxpy` for $l_\infty$ regularized minimization
   - `torch`
-  - etc.
 ### Optional requirements
   - `emcee` for sampling from general distributions
   - `pymanopt` for comparison with Riemannian minimization methods
+  - `tqdm` for cool progress bar in the testing script 
 
 ## Examples
 ### Gaussian case
