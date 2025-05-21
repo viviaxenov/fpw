@@ -8,8 +8,11 @@ contain the root `toctree` directive. -->
 Various statistical tasks, including sampling or computing Wasserstein barycenters, can be reformulated as fixed-point problems for operators on probability distributions:
 
 $$
-G: \mathcal{P}_2(\mathbb{R}^d) \to \mathbb{R} \\
-\text{Find } \rho_* : \ G(\rho_*) = \rho_*
+G: \mathcal{P}_2(\mathbb{R}^d) \to \mathbb{R} 
+$$
+
+$$
+\rho_* : \ G(\rho_* ) = \rho_* 
 $$
 
 where $\mathcal{P}_2(\mathbb{R}^d)$ is a space of all probability measures over $\mathbb{R}^d$ with finite second moments, viewed as a metric space with respect to the 2-Wasserstein metric
@@ -48,14 +51,14 @@ $$
 The Wasserstein distance for Gaussians takes form
 
 $$
-W^2_2(\Sigma_0, \Sigma_1)  = \Tr{\Sigma_0} + \Tr{\Sigma_1} - 2\Tr{\left(\Sigma_0^{\frac{1}{2}}\Sigma_1 \Sigma_0^{\frac{1}{2}}\right)^{\frac{1}{2}}}
+W^2_2(\Sigma_0, \Sigma_1)  = \mathrm{Tr}{\Sigma_0} + \mathrm{Tr}{\Sigma_1} - 2\mathrm{Tr}{\left(\Sigma_0^{\frac{1}{2}}\Sigma_1 \Sigma_0^{\frac{1}{2}}\right)^{\frac{1}{2}}}
 $$
 
 $\mathcal{N}_0^d$ is a Riemannian manifold with tangent space at $\Sigma$ isomorphic to all symmetric matrices.
 The scalar product takes form
 
 $$
-\langle U, V \rangle_\Sigma := \frac{1}{2}\Tr(U\Sigma V)
+\langle U, V \rangle_\Sigma := \frac{1}{2}\mathrm{Tr}(U\Sigma V)
 $$
 
 Riemannian Anderson Mixing relies on keeping a set of historical vectors, which is transported to the tangent space of the current iterate with a *vector transport* mapping.
@@ -66,7 +69,7 @@ The update direction is then chosen based on a solution of a $l_\infty$ regulari
 Here, a solution of the Wasserstein barycenter problem is presented.
 [`Barycenter`](fpw.md#fpw.ProblemGaussian.Barycenter) defines the problem, including the relevant fixed-point operator.
 We first solve the problem with Picard iteration $\Sigma_{k+1} = G(\Sigma_k)$.
-The iteration is run until the fixed-point residual (which is an upper bound for $W_2(\Sigma_k, G(\Sigma_k))$) reaches a prescribed tolerance.
+The iteration is run until the fixed-point residual, which is an upper bound for $W_2(\Sigma_{k}, G(\Sigma_{k}))$ , reaches a prescribed tolerance.
 Then, the accelerated solution is performed by [`BWRAMSolver`](fpw.md#module-fpw.BWRAMSolver).
 The hyperparameters of the method are the number of historical vectors `history_len`, relaxation `relaxation` and the regularization factor in the least squares minimization subproblem `l_inf_bound_Gamma`.
 
@@ -110,7 +113,7 @@ solver = BWRAMSolver(
 cov_bwram = solver.iterate(cov_init, N_iter_max, tol)
 ```
 
-If [pymanopt](https://pymanopt.org/) is installed, one can use [`fpw.PymanoptInterface`](fpw.md#module-fpw.PymanoptInterface) to run Riemannian minimization methods and compare
+If [pymanopt](https://pymanopt.org/) is installed, one can use `fpw.PymanoptInterface` to run Riemannian minimization methods and compare
 
 ```python
 BW_manifold = problem_bc.base_manifold
@@ -127,4 +130,4 @@ Currently submitted to NeurIPS
 
 # General case
 
-Solver for the general case can be found in [`fpw.RAMSolver`](fpw.md#module-fpw.RAMSolver), and the JAX implementation in [`fpw.RAMSolverJAX`](fpw.md#module-fpw.RAMSolverJAX), with wrappers for operators in `fpw.utility`. This however is still TBD.
+Solver for the general case can be found in `fpw.RAMSolver`, and the JAX implementation in `fpw.RAMSolverJAX`, with wrappers for operators in `fpw.utility`. This however is still TBD.
