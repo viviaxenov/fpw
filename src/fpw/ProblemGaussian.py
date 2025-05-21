@@ -14,7 +14,7 @@ import torch
 torch.set_default_dtype(torch.float64)
 
 import ot
-from fpw.PymanoptInterface import *
+from .PymanoptInterface import *
 
 from num2tex import num2tex
 
@@ -129,7 +129,7 @@ class Problem(metaclass=_Meta):
 
         \\Sigma_* = G(\\Sigma_*)
 
-    If there is a smooth functional :math:`f: \\N_0^d \\to \\mathbb{R}`, then the problem of finding the critical point of this functional is equaivalent to a fixed-point problem
+    If there is a smooth functional :math:`f: \\mathcal{N}_0^d \\to \\mathbb{R}`, then the problem of finding the critical point of this functional is equaivalent to a fixed-point problem
 
     .. math::
 
@@ -408,7 +408,7 @@ class Barycenter(Problem):
 
 
     Args:
-        n_sigmas (int) : Number :math:`n_\\sigmas` of distributions. The distributions for the test are taken i.i.d. from the Wishart distribution :math:`\\Sigma \\sim \\mathcal{W}(\\operatorname{I}_d, d)`
+        n_sigmas (int) : Number :math:`n_\\sigma` of distributions. The distributions for the test are taken i.i.d. from the Wishart distribution :math:`\\Sigma \\sim \\mathcal{W}(\\operatorname{I}_d, d)`
         dim (int) : dimension :math:`d` of the distributions
         weights (np.ndarray) : weight vector :math:`w_i > 0`. If not given, set to :math:`w_1 = w_2 = \\dots = w_{n_\\sigma}`
         rs (int) : random seed for the generation of the distribution
@@ -527,7 +527,7 @@ class EntropicBarycenter(Barycenter):
 
 
     Args:
-        n_sigmas (int) : Number :math:`n_\\sigmas` of distributions. The distributions for the test are taken i.i.d. from the Wishart distribution :math:`\\Sigma \\sim \\mathcal{W}(\\operatorname{I}_d, d)`
+        n_sigmas (int) : Number :math:`n_\\sigma` of distributions. The distributions for the test are taken i.i.d. from the Wishart distribution :math:`\\Sigma \\sim \\mathcal{W}(I_d, d)`
         dim (int) : dimension :math:`d` of the distributions
         weights (np.ndarray) : weight vector :math:`w_i > 0`. If not given, set to :math:`w_1 = w_2 = \\dots = w_{n_\\sigma}`
         gamma (np.float64): the regularization parameter :math:`\\gamma`
@@ -613,7 +613,7 @@ class Median(Problem):
         \\Sigma_* = \\arg\\min_{\\Sigma \\in \\mathcal{N}_0^d} \\sum_{k=1}^{n_\\sigma} w_k \\sqrt{W^2_2 + \\varepsilon}(\\Sigma, \\Sigma_k)
 
     Args:
-        n_sigmas (int) : Number :math:`n_\\sigmas` of distributions. The distributions for the test are taken i.i.d. from the Wishart distribution :math:`\\Sigma \\sim \\mathcal{W}(\\operatorname{I}_d, d)`
+        n_sigmas (int) : Number :math:`n_\\sigma` of distributions. The distributions for the test are taken i.i.d. from the Wishart distribution :math:`\\Sigma \\sim \\mathcal{W}(\\operatorname{I}_d, d)`
         dim (int) : dimension :math:`d` of the distributions
         weights (np.ndarray) : weight vector :math:`w_i > 0`. If not given, set to :math:`w_1 = w_2 = \\dots = w_{n_\\sigma}`
         rs (int) : random seed for the generation of the distribution
@@ -661,7 +661,9 @@ class Median(Problem):
         self._sigmas_torch = torch.Tensor(self._sigmas)
         self._weights_torch = torch.Tensor(self._weights)
 
-        self._name = f"Median, {dim=}, k={n_sigmas}, $\\varepsilon = {num2tex(self._eps)}$"
+        self._name = (
+            f"Median, {dim=}, k={n_sigmas}, $\\varepsilon = {num2tex(self._eps)}$"
+        )
 
     def residual(self, Sigma):
         zero = np.zeros(self.dim)
