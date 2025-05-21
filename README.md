@@ -15,11 +15,12 @@ pip install --upgrade fpw@git+https://github.com/viviaxenov/fpw
   - `pymanopt` for comparison with Riemannian minimization methods
   - `tqdm` for cool progress bar in the testing script 
 
-## Examples
-### Gaussian case
+## Gaussian case
 One, two, three
-### General case
+### Examples
+
+## General case
 TBD
-### Documentation
+## Documentation
 ## Citation
 TBD

@@ -32,6 +32,8 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx.ext.napoleon",
     "sphinx.ext.mathjax",
+    "sphinx_copybutton",
+    "sphinx_markdown_builder",
     # "nbsphinx",
 ]
 autodoc_preserve_defaults = True

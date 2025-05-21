@@ -1,9 +1,6 @@
 fpw package
 ===========
 
-Submodules
-----------
-
 fpw.BWRAMSolver module
 ----------------------
 
@@ -48,22 +45,6 @@ fpw.pt module
 -------------
 
 .. automodule:: fpw.pt
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-fpw.test module
----------------
-
-.. automodule:: fpw.test
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-fpw.utility module
-------------------
-
-.. automodule:: fpw.utility
    :members:
    :show-inheritance:
    :undoc-members:

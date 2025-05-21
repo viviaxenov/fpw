@@ -523,7 +523,7 @@ class EntropicBarycenter(Barycenter):
 
     .. math::
 
-        \\Sigma_* = \\arg\\min_{\\Sigma \\in \\mathcal{N}_0^d} \\sum_{k=1}^{n_\\sigma} w_k W_2(\\Sigma, \\Sigma_k) + \\gamma\\operatorname{KL}(\\Sigma|\\I_d)
+        \\Sigma_* = \\arg\\min_{\\Sigma \\in \\mathcal{N}_0^d} \\sum_{k=1}^{n_\\sigma} w_k W_2(\\Sigma, \\Sigma_k) + \\gamma\\operatorname{KL}(\\Sigma|I_d)
 
 
     Args:
