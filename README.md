@@ -3,7 +3,7 @@ sphinx-quickstart on Wed Oct 30 17:14:49 2024.
 You can adapt this file completely to your liking, but it should at least
 contain the root `toctree` directive. -->
 
-# Welcome to fpw’s documentation!
+# Fixed-point problems in Wasserstein space
 
 Various statistical tasks, including sampling or computing Wasserstein barycenters, can be reformulated as fixed-point problems for operators on probability distributions:
 
@@ -123,6 +123,15 @@ optimizer = pymanopt.optimizers.SteepestDescent(log_verbosity=1)
 opt_result = optimizer.run(pymanopt_problem, initial_point=cov_init)
 cov_pymanopt = opt_result.log["iterations"]["point"][-1]
 ```
+
+## Reproduction of manuscript results
+
+```bash
+    python ./src/fpw/test.py CONFIG.json
+```
+runs series of experiments, described in config file ``CONFIG.json``. 
+Config files ``OU_acceleration.json``, ``KL_acceleration.json``, ``Barycenter.json``, ``EntBarycenter.json``, ``Median.json`` reproduce respective experiments from the manuscript.
+Notebook `process_data.ipynb` creates tables and plots.
 
 ## Citation
 
