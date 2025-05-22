@@ -21,13 +21,7 @@ $$
 This infinite-dimensional metric space has a structure, similar to a Riemannian manifold.
 The goal of this project is to identify interesting fixed-point problems and to provide accelerated iterative solution with Riemannian Anderson Mixing.
 
-## Installation
-
-```bash
-pip install --upgrade fpw@git+https://github.com/viviaxenov/fpw
-```
-
-### Requirements
+## Requirements
 
 * [cvxpy](https://www.cvxpy.org/) for $l_\infty$ regularized minimization
 * [torch](https://pytorch.org/)
@@ -60,8 +54,6 @@ $$
 
 Riemannian Anderson Mixing relies on keeping a set of historical vectors, which is transported to the tangent space of the current iterate with a *vector transport* mapping.
 The update direction is then chosen based on a solution of a $l_\infty$ regularized least-squares problem in the tangent space.
-
-## Code example
 
 Here, a solution of the Wasserstein barycenter problem is presented.
 [`Barycenter`](fpw.md#fpw.ProblemGaussian.Barycenter) defines the problem, including the relevant fixed-point operator.
@@ -120,8 +112,6 @@ optimizer = pymanopt.optimizers.SteepestDescent(log_verbosity=1)
 opt_result = optimizer.run(pymanopt_problem, initial_point=cov_init)
 cov_pymanopt = opt_result.log["iterations"]["point"][-1]
 ```
-
-## Citation
 
 Currently submitted to NeurIPS
 

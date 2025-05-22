@@ -18,8 +18,6 @@ sys.path.insert(0, os.path.abspath("../src/"))
 # -- Project information -----------------------------------------------------
 
 project = "fpw"
-copyright = "2024, Vitalii Aksenov"
-author = "Vitalii Aksenov"
 
 
 # -- General configuration ---------------------------------------------------

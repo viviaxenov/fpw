@@ -24,11 +24,6 @@ $$
 This infinite-dimensional metric space has a structure, similar to a Riemannian manifold.
 The goal of this project is to identify interesting fixed-point problems and to provide accelerated iterative solution with Riemannian Anderson Mixing.
 
-## Installation
-
-```bash
-pip install --upgrade fpw@git+https://github.com/viviaxenov/fpw
-```
 
 ### Requirements
 
