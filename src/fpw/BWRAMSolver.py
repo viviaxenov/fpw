@@ -103,6 +103,10 @@ def vector_translation(Sigma_0, Sigma_1, U0):
     return U1
 
 
+def vt_trival(Sigma_0, Sigma_1, U0):
+    return U0
+
+
 def project_on_tangent(U, Sigma):
     rhs = Sigma @ U + U.T @ Sigma
     return sp.linalg.solve_continuous_lyapunov(Sigma, rhs)
@@ -111,7 +115,6 @@ def project_on_tangent(U, Sigma):
 def one_step_approx(Sigma_0, Sigma_1, U0):
     U1 = vector_translation(Sigma_0, Sigma_1, U0)
     return project_on_tangent(U1, Sigma_1)
-
 
 
 def _as_generator(r: Union[np.float64, Generator]):
@@ -171,7 +174,7 @@ class BWRAMSolver:
         relaxation: Union[np.float64, Generator] = 0.95,
         l_inf_bound_Gamma: float = 0.1,
         history_len: int = 2,
-        vt_kind: Literal["parallel", "translation", "one-step"] = "one-step",
+        vt_kind: Literal["parallel", "translation", "one-step", "trivial"] = "one-step",
         r_threshold=None,
         restart_every=None,
         **kwargs,
@@ -196,6 +199,8 @@ class BWRAMSolver:
             self._vt = vector_translation
         elif vt_kind == "one-step":
             self._vt = one_step_approx
+        elif vt_kind == "trivial":
+            self._vt = vt_trival
         self._k = 0
         self.norm_Gamma = []
         self.norm_rk = []

@@ -27,6 +27,8 @@ class BuresWassersteinManifold(pymanopt.manifolds.manifold.RiemannianSubmanifold
             self.transport = self._vector_translation
         elif pt_type == "one-step":
             self.transport = self._one_step_approx
+        elif pt_type == "trivial":
+            self.transport = self._trivial
         else:
             raise NotImplementedError(f"Parallel transport {pt_type} not implemented")
         super().__init__(name, dimension)
@@ -140,3 +142,7 @@ class BuresWassersteinManifold(pymanopt.manifolds.manifold.RiemannianSubmanifold
     def _one_step_approx(self, Sigma_0, Sigma_1, U0):
         U1 = self._vector_translation(Sigma_0, Sigma_1, U0)
         return self.projection(Sigma_1, U1)
+
+
+    def _trivial(self, Sigma_0, Sigma_1, U0):
+        return U0
