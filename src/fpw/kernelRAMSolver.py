@@ -1,4 +1,4 @@
-from typing import Callable, Union, List, Dict, Generator, Literal
+from typing import Callable, Union, List, Dict, Generator, Literal, Generator
 
 import numpy as np
 
@@ -12,20 +12,9 @@ jax.config.update("jax_enable_x64", True)
 import matplotlib.pyplot as plt
 
 from functools import partial
+from .utility import _as_generator
 
 
-def _as_generator(r: Union[np.float64, Generator]):
-    if isinstance(r, Generator):
-        return r
-    elif isinstance(r, float):
-
-        def rgen():
-            while True:
-                yield r
-
-        return rgen()
-    else:
-        raise RuntimeError(f"Type of relaxation/regularization ({r}) not supported")
 
 
 def getOperatorSteinGradKL(log_density_target: Callable, stepsize: jnp.float64):
@@ -243,6 +232,8 @@ class kernelRAMSolver:
         condG = jnp.linalg.cond(Gk.reshape(self.n_particles * (self.dim + 1), -1))
         condW = jnp.linalg.cond(W_quad)
         print(f"k = {self._k:2d}; cond(G) = {condG:.2e} cond(W) = {condW:.2e}")
+        # with(np.printoptions(precision=2)):
+        #     print(jnp.linalg.eigvalsh(W_quad))
 
         return self._x_cur
 

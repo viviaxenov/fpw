@@ -1,6 +1,6 @@
 import abc
 from docstring_inheritance import GoogleDocstringInheritanceInitMeta
-from typing import Union, Tuple
+from typing import Union, Tuple, Generator
 from types import MethodType
 
 import warnings
@@ -16,12 +16,25 @@ import pickle
 
 import emcee
 
+def _as_generator(r: Union[np.float64, Generator]):
+    if isinstance(r, Generator):
+        return r
+    elif isinstance(r, float):
+
+        def rgen():
+            while True:
+                yield r
+
+        return rgen()
+    else:
+        raise RuntimeError(f"Type of relaxation/regularization ({r}) not supported")
 
 class _Meta(abc.ABC, GoogleDocstringInheritanceInitMeta):
     pass
 
 
-class Distribution(metaclass=_Meta):
+# class Distribution(metaclass=_Meta):
+class Distribution():
     """Convenience class for storing distributions and plotting.
 
     Args:
@@ -321,6 +334,20 @@ class Gaussian(Distribution):
         rs_sample: int = 1,
         name: str = None,
     ):
+        """
+        Initializes distribution
+
+        Args:
+            mean: mean of the distribution
+            cov: covariance matrix
+            dim: dimension (in case of randomly generated mean and covariance)
+            m_mag: maximal norm of randomly generated mean
+            sigma_min: mininmal eignevalue of the randomly generated covariance matrix
+            sigma_max: maximal eignevalue of the randomly generated covariance matrix
+            rs_params: random seed for parameters
+            rs_sampling: random seed for sampling
+            name: name (for saving and plotting)
+        """
         super().__init__(self)
         if mean is not None:
             if cov is not None:

@@ -11,6 +11,8 @@ from geomloss import SamplesLoss
 import cvxpy as cp
 from cvxpylayers.torch import CvxpyLayer
 
+from .utility import _as_generator
+
 
 def check_cov(Cov: np.ndarray):
     assert len(Cov.shape) == 2 and Cov.shape[0] == Cov.shape[1]
@@ -115,21 +117,6 @@ def project_on_tangent(U, Sigma):
 def one_step_approx(Sigma_0, Sigma_1, U0):
     U1 = vector_translation(Sigma_0, Sigma_1, U0)
     return project_on_tangent(U1, Sigma_1)
-
-
-def _as_generator(r: Union[np.float64, Generator]):
-    if isinstance(r, Generator):
-        return r
-    elif isinstance(r, float):
-
-        def rgen():
-            while True:
-                yield r
-
-        return rgen()
-    else:
-        raise RuntimeError(f"Type of relaxation/regularization ({r}) not supported")
-
 
 def _get_cvxpy_problem(dim: int, mk: int, Gamma_bound: float) -> cp.Problem:
     gamma = cp.Variable((mk,), name="gamma")
