@@ -1,0 +1,28 @@
+{
+    "problems": {
+        "Median": {
+           "vt_kind": "trivial",
+           "dim": [3,5,10,20,50],
+           "n_sigmas": [3, 5, 10, 20],
+           "rs": [1,2,3,4,5,6,7,8,9,10,11,12],
+           "eps": 1e-3,
+           "scaling": 1.0
+        }
+    },
+    "methods": {
+        "RGD": {"N_steps_max": 50},
+        "RCG": {"N_steps_max": 50},
+        "BWRAM": {
+            "history_len": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
+            "l_inf_bound_Gamma":  [0.1, 1.5, 15],
+            "relaxation": [1.0, 5.0, 10.0],
+            "N_steps_max": 50
+        }
+    },
+    "N_steps_max": 2000,
+    "r_min": 1e-7,
+    "cost_min": 1e-10,
+    "plot": true,
+    "n_max_plot": 20,
+    "output_dir": "./outputs/Median_trivial"
+}

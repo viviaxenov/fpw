@@ -140,8 +140,8 @@ class Problem(metaclass=_Meta):
 
     def __init__(self, dim=None, vt_kind="one-step", **kwargs):
         self._dim = dim
-        # TODO: rename pt_type everywhere!
-        self.base_manifold = BuresWassersteinManifold(dim, pt_type=vt_kind)
+        self._vt_kind = vt_kind
+        self.base_manifold = BuresWassersteinManifold(dim, vt_kind=vt_kind)
 
     @property
     def dim(self):
@@ -149,7 +149,7 @@ class Problem(metaclass=_Meta):
 
     @property
     def name(self):
-        return self._name
+        return self._name + " " + self._vt_kind
 
     def __call__(self, Sigma: np.ndarray) -> np.ndarray:
         """Implements the operator :math:`G`, for which we seek the fixed-point
@@ -337,9 +337,6 @@ class OUEvolution(Problem):
     def dt(self):
         return self._dt
 
-    @property
-    def name(self):
-        return self._name
 
     def __call__(self, Sigma):
         return self.tmp1 @ Sigma @ self.tmp1 + self.tmp2 @ self.target @ self.tmp2
@@ -423,7 +420,7 @@ class Barycenter(Problem):
         rs: int = 1,
         **kwargs,
     ):
-        super().__init__(dim=dim)
+        super().__init__(dim=dim, **kwargs)
         self.has_cost = True
 
         if n_sigmas is None:
@@ -506,9 +503,6 @@ class Barycenter(Problem):
             barycenter_loss_vectorized, self._sigmas_torch, self._weights_torch
         )
 
-    @property
-    def name(self):
-        return self._name
 
     @property
     def n_sigmas(self):
@@ -544,7 +538,7 @@ class EntropicBarycenter(Barycenter):
         gamma: np.float64 = 1e-2,
         **kwargs,
     ):
-        super().__init__(n_sigmas=n_sigmas, dim=dim, weights=weights, rs=rs)
+        super().__init__(n_sigmas=n_sigmas, dim=dim, weights=weights, rs=rs, **kwargs)
         self.has_cost = True
 
         assert gamma > 0.0
@@ -587,9 +581,6 @@ class EntropicBarycenter(Barycenter):
             self._gamma,
         )
 
-    @property
-    def name(self):
-        return self._name
 
     @property
     def n_sigmas(self):
@@ -632,7 +623,7 @@ class Median(Problem):
         scaling: np.float64 = 1.0,
         **kwargs,
     ):
-        super().__init__(dim=dim)
+        super().__init__(dim=dim, **kwargs)
         self.has_cost = True
 
         if n_sigmas is None:
@@ -710,9 +701,6 @@ class Median(Problem):
             self._scaling,
         )
 
-    @property
-    def name(self):
-        return self._name
 
     @property
     def n_sigmas(self):

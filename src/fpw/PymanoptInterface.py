@@ -16,21 +16,28 @@ def to_dSigma(U: np.ndarray, Cov: np.ndarray):
 
 def to_Map(V: np.ndarray, Cov: np.ndarray):
     L_CV = sp.linalg.solve_continuous_lyapunov(Cov, V)
+    return L_CV
 
+def Christoffel(Sigma: np.ndarray, X: np.ndarray, Y: np.ndarray):
+    L_CX = sp.linalg.solve_continuous_lyapunov(Sigma, X)
+    L_CY = sp.linalg.solve_continuous_lyapunov(Sigma, Y)
+    L_CYmulL_CX = L_CY @ L_CX
+    Gamma = Sigma @ L_CYmulL_CX + L_CYmulL_CX @ Sigma - L_CX @ Y - L_CY @ X
+    return 0.5 * (Gamma + Gamma.T)
 
 class BuresWassersteinManifold(pymanopt.manifolds.manifold.RiemannianSubmanifold):
-    def __init__(self, dimension, pt_type="parallel"):
+    def __init__(self, dimension, vt_kind="trivial"):
         name = f"Gaussian distributions in {dimension=} (represented with their covariance matrices)"
-        if pt_type == "parallel":
+        if vt_kind == "parallel":
             self.transport = self._parallel_transport
-        elif pt_type == "translation":
+        elif vt_kind == "translation":
             self.transport = self._vector_translation
-        elif pt_type == "one-step":
+        elif vt_kind == "one-step":
             self.transport = self._one_step_approx
-        elif pt_type == "trivial":
+        elif vt_kind == "trivial":
             self.transport = self._trivial
         else:
-            raise NotImplementedError(f"Parallel transport {pt_type} not implemented")
+            raise NotImplementedError(f"Parallel transport {vt_kind} not implemented")
         super().__init__(name, dimension)
 
     def inner_product(
@@ -52,8 +59,8 @@ class BuresWassersteinManifold(pymanopt.manifolds.manifold.RiemannianSubmanifold
             raise
 
     def norm(self, point, tangent_vector):
-        nrm = np.trace(tangent_vector.T @ point @ tangent_vector) ** 0.5
-        return nrm
+        nrm_sq = np.trace(tangent_vector.T @ point @ tangent_vector)
+        return np.sqrt(np.maximum(0., nrm_sq))
 
     def random_point(self):
         A = np.random.randn(self.dim, self.dim)

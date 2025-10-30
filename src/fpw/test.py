@@ -52,6 +52,9 @@ def _run_test_BWRAM(
     residuals = []
     covs = []
     dts = []
+
+    kwargs['vt_kind'] = problem._vt_kind
+
     if problem.has_cost:
         costs = []
 
@@ -118,6 +121,38 @@ _defaults = dict(
 )
 
 
+class _LineSearchWithIterCount(pymanopt.optimizers.line_search.AdaptiveLineSearcher):
+    def __init__(self, *args, **kwargs):
+        self._n_calls_cur_iter = 0
+        self.iters = []
+        super().__init__(*args, **kwargs)
+
+    def search(self, *args, **kwargs):
+        self._n_calls_cur_iter = 0
+
+        self.orig_objective = args[0]
+
+        def _objective_with_count(*_args, **_kwargs):
+            self._n_calls_cur_iter += 1
+            return self.orig_objective(*_args, **_kwargs)
+
+        args = list(args)
+        args[0] = _objective_with_count
+        args = tuple(args)
+
+        retvals = super().search(*args, **kwargs)
+        self.iters.append(self._n_calls_cur_iter)
+        return retvals
+
+
+def _expand_arr(arr, iters):
+    expanded_arr = []
+    for val, ntimes in zip(arr, iters):
+        expanded_arr += [val]* ntimes
+
+    return expanded_arr
+
+
 def _run_test_Riemannian_minimization(
     problem: Problem,
     N_steps_max: int,
@@ -145,6 +180,7 @@ def _run_test_Riemannian_minimization(
 
     cost_torch = pymanopt.function.pytorch(BW_manifold)(problem.get_cost_torch())
 
+    problem.n_cost_calls = 0
     _problem = pymanopt.Problem(BW_manifold, cost_torch)
 
     opt_factory = (
@@ -152,34 +188,45 @@ def _run_test_Riemannian_minimization(
         if method == "RGD"
         else pymanopt.optimizers.ConjugateGradient
     )
+    ls = _LineSearchWithIterCount()
     # Avoiding <<Unexpected key-value argument>> error
     valid_params = inspect.signature(opt_factory).parameters.keys()
     kwargs_solver = {k: v for k, v in kwargs.items() if k in valid_params}
     kwargs_solver = _Riemannian_defaults | kwargs_solver
     kwargs_solver["max_iterations"] = N_steps_max
     kwargs_solver["min_gradient_norm"] = r_min
+    kwargs_solver["line_searcher"] = ls
     optimizer = opt_factory(
         **kwargs_solver,
     )
+
     try:
-        opt_result = optimizer.run(_problem, initial_point=cov_init)
-    except (ValueError, RuntimeWarning):
-        raise
+        opt_result = optimizer.run(
+            _problem,
+            initial_point=cov_init,
+            reuse_line_searcher=True,  # to avoid deepcopy of line searcher and be able to use counting
+        )
+        log = opt_result.log
+    except (ValueError, RuntimeWarning) as e:
+        print(f"Error encountered in {method}: {e}")
+        log = optimizer._log
 
-    covs = opt_result.log["iterations"]["point"]
-    residuals = np.array(opt_result.log["iterations"]["gradient_norm"])
-    costs = opt_result.log["iterations"]["cost"]
 
-    dts = np.array(opt_result.log["iterations"]["time"])
+    covs = log["iterations"]["point"]
+    residuals = np.array(log["iterations"]["gradient_norm"])
+    costs = log["iterations"]["cost"]
+
+    dts = np.array(log["iterations"]["time"])
     dts = dts[1:] - dts[:-1]
 
     results = dict()
     # results["covs"] = covs
+    iters  = optimizer.line_searcher.iters
     results["covs"] = []
-    results["residuals"] = residuals
+    results["residuals"] = _expand_arr(residuals, iters)
     results["dts"] = dts
     results["cov_final"] = covs[-1]
-    results["costs"] = costs
+    results["costs"] = _expand_arr(costs, iters)
 
     return results
 
@@ -196,6 +243,7 @@ _method_name_to_fn = {
     "RGD": _run_test_Riemannian_minimization,
     "RCG": _run_test_Riemannian_minimization,
 }
+_methods_with_vt = {"BWRAM", "RCG"}
 
 
 def _run_experiment(**kwargs):
@@ -335,7 +383,7 @@ def _plot_figure(
             case "RCG":
                 return 2
             case "BWRAM":
-                return 2 + rec['history_len']
+                return 2 + rec["history_len"]
 
     r_to_plot.sort(key=_pretty_sorting)
 
@@ -426,9 +474,9 @@ def run_experiments(config: dict):
                     res["costs_to_0"] = [c - cost_ref for c in res["costs"]]
             else:
                 # If Picard didn't produce a reference solution, don't run other methods either
+                print("Picard method didn't converge; can't produce reference solution; Skipping")
                 pbar.update(1 + len(args_methods))
                 continue
-
 
             pbar.update(1)
 
@@ -482,7 +530,7 @@ if __name__ == "__main__":
     input_file = args.input_file
 
     if args.replot:
-        pass
+        raise NotImplemented
 
     with open(args.input_file, "r") as ifile:
         config = json.load(ifile)

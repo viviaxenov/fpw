@@ -1,0 +1,27 @@
+{
+    "problems": {
+        "OU": {
+            "vt_kind": "trivial",
+            "dt": 0.2,
+            "dim": [4, 8, 16, 32, 64, 128],
+            "sigma_min": 0.5,
+            "sigma_max": [1.0, 5.0, 10.0, 20.0],
+            "rs": [1,2,3,4,5]
+        }
+    },
+    "methods": {
+        "BWRAM": {
+            "history_len": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
+            "l_inf_bound_Gamma": [ 1.5,  10.0],
+            "relaxation": [ 0.9, 1.0, 1.2],
+            "N_steps_max": 200
+        },
+        "RGD": {"N_steps_max": 200},
+        "RCG": {"N_steps_max": 200}
+    },
+    "N_steps_max": 1000,
+    "r_min": 1e-5,
+    "cost_min": 1e-10,
+    "plot": false,
+    "output_dir": "./outputs/OU_acceleration_trivial"
+}

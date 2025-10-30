@@ -45,6 +45,9 @@ def Christoffel(Sigma: np.ndarray, X: np.ndarray, Y: np.ndarray):
     Gamma = Sigma @ L_CYmulL_CX + L_CYmulL_CX @ Sigma - L_CX @ Y - L_CY @ X
     return 0.5 * (Gamma + Gamma.T)
 
+def _norm_bw_stab(V, Sigma):
+        norm_sq = np.trace(V @ Sigma @ V)
+        return np.sqrt(np.maximum(0., norm_sq))
 
 def dBW(Cov_0, Cov_1):
     zero = np.zeros(Cov_0.shape[0])
@@ -205,6 +208,7 @@ class BWRAMSolver:
         self.norm_Gamma = []
         self.norm_rk = []
 
+
     def _operator_and_residual(self, x_cur: np.ndarray):
         if hasattr(self._operator, "residual"):
             r = self._operator.residual(x_cur)
@@ -233,11 +237,11 @@ class BWRAMSolver:
         self._delta_rs = []
         self._delta_xs = [r0.copy()]
         self.norm_Gamma += [0.0]
-        self.norm_rk += [np.sqrt(np.trace(r0 @ self._x_prev @ r0))]
+        self.norm_rk += [_norm_bw_stab(r0, self._x_prev)]
         self._k = 1
 
     def _check_restart(self, rk):
-        norm_rk_cur = np.trace(rk @ self._x_cur @ rk) ** 0.5
+        norm_rk_cur = _norm_bw_stab(rk, self._x_cur)
         if self._k == self._k_restart:
             return True
         mk = min(self._m, self._k)
@@ -251,7 +255,7 @@ class BWRAMSolver:
         self,
     ):
         _, rk = self._operator_and_residual(self._x_cur)
-        norm_rk_cur = np.trace(rk @ self._x_cur @ rk) ** 0.5
+        norm_rk_cur = _norm_bw_stab(rk, self._x_cur)
 
         if self._check_restart(rk):
             self.restart()

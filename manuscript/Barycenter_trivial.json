@@ -1,0 +1,26 @@
+{
+    "problems": {
+        "Barycenter": {
+           "vt_kind": "trivial",
+           "dim": [3, 5, 10, 20, 50],
+           "n_sigmas": [3, 5, 10, 20],
+           "rs": [1,2,3,4,5]
+        }
+    },
+    "methods": {
+        "BWRAM": {
+            "history_len": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
+            "l_inf_bound_Gamma": [1.5, 10.0],
+            "relaxation": [ 0.9, 1.0, 1.2],
+            "N_steps_max": 100
+        },
+        "RGD": {"N_steps_max": 60},
+        "RCG": {"N_steps_max": 60}
+    },
+    "N_steps_max": 500,
+    "r_min": 1e-10,
+    "cost_min": 1e-10,
+    "plot": true,
+    "n_max_plot": 5,
+    "output_dir": "./outputs/Barycenter_trivial"
+}
