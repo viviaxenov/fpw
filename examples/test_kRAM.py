@@ -18,17 +18,14 @@ sinkdiv = lambda *args: 1.0
 
 N_samples = 100
 dim = 3
-N_iter = 300
+N_iter = 150
 
 sigma_targ = 0.3
 m_targ = 0.0
 p = 1.0
 
-stepsize_SVGD = 0.8
+stepsize_SVGD = 0.9
 
-bandwidth = 0.5
-kern = lambda _x1, _x2: jnp.exp(-((_x1 - _x2) ** 2).sum() / bandwidth**2)
-kern = jax.jit(kern)
 
 
 # Gaussian mixture
@@ -50,24 +47,28 @@ sample_targ = jnp.concatenate(
     axis=0,
 )
 x0 = jax.random.normal(k3, (N_samples, dim))
+kern = lambda _x1, _x2: jnp.exp(-((_x1 - _x2) ** 2).sum() / bandwidth**2)
+# kern = jax.jit(kern)
+bandwidth = bandwidth_median(x0)
 
 oper = getOperatorSteinGradKL(log_density_targ, -stepsize_SVGD)
 
 solver = kernelRAMSolver(
-    oper, x0, kern, relaxation=3.00, l2_regularization=8e-3, history_len=6,
+    oper, kern, relaxation=3.00, l2_regularization=8e-3, history_len=6,
 )
 
 e_init = sinkdiv(x0, sample_targ)
 err_sinkhorn = [[e_init], [e_init]]
 x = x0.copy()
-for _ in range(N_iter):
-    x = solver._step()
-    err_sinkhorn[0].append(sinkdiv(x, sample_targ))
 
-x_kRAM = x.copy()
+solver, (d_rkhs_kram, d_l2_kram) = solver.iterate(x, max_iter=N_iter)
+x_kRAM = solver._x_cur
+
 # baseline
 d_rkhs = []
 d_l2 = []
+
+# Run SVGD for reference
 x_SVGD = x0.copy()
 for _ in range(N_iter):
     sg = oper(x_SVGD)
@@ -76,21 +77,25 @@ for _ in range(N_iter):
 
     x_SVGD += v
 
+    # Sinkhorn distance (== estimation of Wasserstein distance)
+    # Need a reference sample ``sample.targ`` which has to be generated e.g. with MCMC
     err_sinkhorn[1].append(sinkdiv(x_SVGD, sample_targ))
-    d_rkhs.append(jnp.einsum("ij,ijkl,kl", sg, G, sg) ** 0.5)
-    d_l2.append(jnp.linalg.norm(v) / N_samples**0.5)
+    # Estimate the residual in H^d_k norm
+    d_rkhs.append(norm_rkhs(sg, G))
+    # Estimate size of the step in l2 norm;
+    d_l2.append(norm_l2(v))
 
 label_RAM = f"$k$RAM, m={solver._m}"
 
 fig, axs = plt.subplots(2, 1, sharex=True)
 
 ax = axs[0]
-ax.plot(solver._residual_rkhs)
+ax.plot(d_rkhs_kram)
 ax.plot(d_rkhs, color="r")
 ax.set_ylabel(r"$\|r_t\|_{\mathcal{H}^d_k}$")
 
 ax = axs[1]
-ax.plot(solver._dx_l2, label=label_RAM)
+ax.plot(d_l2_kram, label=label_RAM)
 ax.plot(d_l2, label=f"SVGD (Picard), $h$ = {stepsize_SVGD:.2f}", color="r")
 ax.set_ylabel(r"$\|\Delta x_t \|_{L_2(\rho_t)}$")
 
