@@ -1,4 +1,4 @@
-from typing import Callable, Union, List, Dict, Generator, Literal, Generator
+from typing import Callable, Union, List, Dict, Generator, Literal, Generator, Tuple
 
 import numpy as np
 
@@ -14,13 +14,35 @@ import matplotlib.pyplot as plt
 from functools import partial
 from .utility import _as_generator
 
+@jax.jit
+def bandwidth_median(X: jnp.array):
+    N, d = X.shape
+    X_diffs = X[jnp.newaxis, :, :] - X[:, jnp.newaxis, :]
+    idx = jnp.triu_indices(N, k=1)
+    X_diffs = X_diffs[*idx, :]
+    pairwise_dists = (X_diffs**2).sum(axis=-1)
+    h = jnp.median(pairwise_dists)
+    h = jnp.sqrt(0.5 * h / jnp.log(d + 1))
 
+    return h
+
+
+# @jax.jit
+def norm_rkhs(x, G):
+    rkhs_norm_sq = jnp.einsum("ij,ijkl,kl", x, G, x)
+    return jnp.sqrt(jnp.maximum(rkhs_norm_sq, 0.0))
+
+
+# @jax.jit
+def norm_l2(v):
+    norm_l2 = jnp.linalg.norm(v, axis=-1).mean()
+    return norm_l2
 
 
 def getOperatorSteinGradKL(log_density_target: Callable, stepsize: jnp.float64):
     grad_log_fn = jax.vmap(jax.grad(log_density_target))
 
-    @jax.jit
+    # @jax.jit
     def steinGradKL(x: jnp.ndarray):
         N_samples, dim = x.shape
         sg = jnp.zeros((N_samples, dim + 1))
@@ -33,7 +55,7 @@ def getOperatorSteinGradKL(log_density_target: Callable, stepsize: jnp.float64):
     return steinGradKL
 
 
-@partial(jax.jit, static_argnums=-1)
+# @partial(jax.jit, static_argnums=-1)
 def evalTangent(
     x_eval: jnp.ndarray, tangent: jnp.ndarray, x_basis: jnp.ndarray, kern: Callable
 ):
@@ -51,7 +73,8 @@ def evalTangent(
     return comp_T0 + comp_T1
 
 
-@partial(jax.jit, static_argnums=-1)
+# to do: reimplement as matvec?
+# @partial(jax.jit, static_argnums=-1)
 def pairwiseScalarProductOfBasisVectors(x1: jnp.array, x2: jnp.array, kern: Callable):
     N, d = x1.shape
     M, d1 = x2.shape
@@ -85,7 +108,7 @@ def pairwiseScalarProductOfBasisVectors(x1: jnp.array, x2: jnp.array, kern: Call
     return res_mat
 
 
-@jax.jit
+# @jax.jit
 def vectorTransport(
     x_cur: jnp.ndarray,
     G_cur: jnp.ndarray,
@@ -107,7 +130,8 @@ def vectorTransport(
     tang_cur = jnp.stack(
         [
             jsp.sparse.linalg.cg(
-                lambda _x: jnp.einsum("ijkl,kl->ij", G_cur, _x) + reg_proj*_x, rhs[:, :, i]
+                lambda _x: jnp.einsum("ijkl,kl->ij", G_cur, _x) + reg_proj * _x,
+                rhs[:, :, i],
             )[0]
             for i in range(mk)
         ],
@@ -118,31 +142,33 @@ def vectorTransport(
 
 
 # Naming tentative; Riemannian -> Wasserstein? Ottonian? Steinian?
-# TODO: need to pass a bunch of (*args, **kwargs) to both PT and Sinkhorn
 class kernelRAMSolver:
     def __init__(
         self,
         operator: Callable,
-        x0: jnp.array,
         kernel: Callable,
         relaxation: Union[jnp.float64, Generator] = 0.95,
         l2_regularization: Union[jnp.float64, Generator] = 0.0,
         history_len: int = 2,
+        metrics: Tuple[Callable] = None,
     ):
         self._operator = operator
-        self._k = 0
+        # self._k = 0
         self._m = history_len
 
         self._kernel = kernel
         self._relaxation = _as_generator(relaxation)
         self._l2_reg = _as_generator(l2_regularization)
 
-        self._residual_rkhs = []
-        self._dx_l2 = []
-        self._initialize_iteration(x0)
+        # self._residual_rkhs = []
+        self._x_cur, self._x_prev, self._r_prev, self._delta_rs, self._delta_xs = (
+            None,
+        ) * 5
+        self._metrics = metrics
+        # self._initialize_iteration(x0)
 
     # TODO: pytree functional to use @jit with everything
-
+    @jax.jit
     def _initialize_iteration(self, x0: jnp.ndarray):
         N, d = x0.shape
         r0 = self._operator(x0)
@@ -150,24 +176,27 @@ class kernelRAMSolver:
 
         v = evalTangent(x0, r0, x0, self._kernel)
 
-        self._residual_rkhs.append(jnp.einsum("ij,ijkl,kl", r0, G, r0) ** 0.5)
-        self._dx_l2.append(jnp.linalg.norm(v) / N**0.5)
-
         x1 = x0 + v
 
-        self.dim = d
-        self.n_particles = N
         self._x_prev = x0.copy()  # x_k-1
         self._x_cur = x1.copy()  # x_k
         self._r_prev = r0.copy()
 
         self._delta_rs = None
         self._delta_xs = r0.copy()[:, :, jnp.newaxis]
-        self._k = 1
-        condG = jnp.linalg.cond(G.reshape(N * (d + 1), N * (d + 1)))
-        print(f"k = {self._k:2d}; cond(G) = {condG:.2e}")
+        # self._k = 1
+        residual_rkhs = norm_rkhs(r0, G)
+        dx_l2 = norm_l2(v)
+
+        metric_vals = (residual_rkhs, dx_l2)
+
+        if self._metrics is not None:
+            metric_vals += tuple(m(x1) for m in self._metrics)
+
+        return self, metric_vals
 
     # TODO jit ?
+    @jax.jit
     def _step(
         self,
     ):
@@ -222,36 +251,85 @@ class kernelRAMSolver:
         v = evalTangent(
             self._x_cur, delta_x_cur, self._x_cur, self._kernel
         )  # <<Exponential>>
+
         self._x_cur += v
         self._r_prev = rk
-        self._k += 1
+        # self._k += 1
 
-        self._residual_rkhs.append(jnp.einsum("ij,ijkl,kl", rk, Gk, rk) ** 0.5)
-        self._dx_l2.append(jnp.linalg.norm(v) / self.n_particles**0.5)
+        residual_rkhs = norm_rkhs(rk, Gk)
 
-        condG = jnp.linalg.cond(Gk.reshape(self.n_particles * (self.dim + 1), -1))
-        condW = jnp.linalg.cond(W_quad)
-        print(f"k = {self._k:2d}; cond(G) = {condG:.2e} cond(W) = {condW:.2e}")
-        # with(np.printoptions(precision=2)):
-        #     print(jnp.linalg.eigvalsh(W_quad))
+        dx_l2 = norm_l2(v)
+        metric_vals = (residual_rkhs, dx_l2)
 
-        return self._x_cur
+        if self._metrics is not None:
+            metric_vals += tuple(m(self._x_cur) for m in self._metrics)
 
-    def iterate(self, x0: jnp.ndarray, max_iter: int, residual_conv_tol: jnp.float64):
-        if self._k == 0:
-            self._initialize_iteration(x0)
-        while jnp.linalg.norm(self._r_prev) > residual_conv_tol:
-            self._step()
-            if self._k >= max_iter:
-                break
+        return self, metric_vals
 
-        return self._x_cur
-
-    def restart(
+    # @partial(jax.jit, static_argnames=('max_iter'))
+    def iterate(
         self,
-        new_history_len=None,
-        new_relaxation=None,
+        x0: jnp.ndarray,
+        max_iter: int = 10,
     ):
-        k = self._k
-        self._initialize_iteration(self._x_cur.copy())
-        self._k = k
+        solver, metric_vals_orig = self._initialize_iteration(x0)
+        metric_vals = [metric_vals_orig]
+        for _ in range(solver._m):
+            solver, mv = solver._step()
+            metric_vals.append(mv)
+        metric_vals = jnp.array(metric_vals)
+
+        def body_fn(carry, *args):
+            solver = carry
+            solver, metric_vals = solver._step()
+
+            return solver, metric_vals
+
+        solver, metric_vals_run = jax.lax.scan(
+            body_fn, solver, length=max_iter - solver._m
+        )
+
+        metric_vals_run = jnp.array(metric_vals_run)
+        metric_vals = jnp.concatenate((metric_vals.T, metric_vals_run), axis=1)
+
+        return solver, metric_vals
+
+    # def restart(
+    #     self,
+    #     new_history_len=None,
+    #     new_relaxation=None,
+    # ):
+    #     k = self._k
+    #     self._initialize_iteration(self._x_cur.copy())
+    #     self._k = k
+
+    def _tree_flatten(self):
+        children = (
+            self._x_cur,
+            self._x_prev,
+            self._r_prev,
+            self._delta_rs,
+            self._delta_xs,
+        )
+        aux_data = {
+            "history_len": self._m,
+            "operator": self._operator,
+            "kernel": self._kernel,
+            "relaxation": self._relaxation,
+            "l2_regularization": self._l2_reg,
+            "metrics": self._metrics,
+        }
+
+        return (children, aux_data)
+
+    @classmethod
+    def _tree_unflatten(cls, aux_data, children):
+        sol = cls(**aux_data)
+        sol._x_cur, sol._x_prev, sol._r_prev, sol._delta_rs, sol._delta_xs = children
+
+        return sol
+
+
+jax.tree_util.register_pytree_node(
+    kernelRAMSolver, kernelRAMSolver._tree_flatten, kernelRAMSolver._tree_unflatten
+)
