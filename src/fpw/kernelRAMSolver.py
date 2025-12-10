@@ -6,13 +6,14 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 
-jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_enable_x64", True)
 
 
 import matplotlib.pyplot as plt
 
 from functools import partial
 from .utility import _as_generator
+
 
 @jax.jit
 def bandwidth_median(X: jnp.array):
@@ -127,16 +128,12 @@ def vectorTransport(
     # matTransition = pairwiseScalarProductOfBasisVectors(x_cur, x_prev)
     rhs = jnp.einsum("ijkl,klm->ijm", T_cur, tang_prev)
 
-    tang_cur = jnp.stack(
-        [
-            jsp.sparse.linalg.cg(
-                lambda _x: jnp.einsum("ijkl,kl->ij", G_cur, _x) + reg_proj * _x,
-                rhs[:, :, i],
-            )[0]
-            for i in range(mk)
-        ],
-        axis=-1,
-    )
+    tang_cur = jsp.sparse.linalg.cg(
+        lambda _x: jnp.einsum("ijkl,klm->ijm", G_cur, _x) + reg_proj * _x,
+        rhs,
+        x0=rhs,
+        tol=1e-5,
+    )[0]
 
     return tang_cur
 
@@ -182,8 +179,11 @@ class kernelRAMSolver:
         self._x_cur = x1.copy()  # x_k
         self._r_prev = r0.copy()
 
-        self._delta_rs = None
-        self._delta_xs = r0.copy()[:, :, jnp.newaxis]
+        # self._delta_rs = None
+        self._delta_rs = jnp.zeros((N, d + 1, self._m))
+        # self._delta_xs = r0.copy()[:,  + 1:, jnp.newaxis]
+        self._delta_xs = jnp.zeros((N, d + 1, self._m))
+        self._delta_xs = self._delta_xs.at[:, :, 0].set(r0)
         # self._k = 1
         residual_rkhs = norm_rkhs(r0, G)
         dx_l2 = norm_l2(v)
@@ -196,7 +196,6 @@ class kernelRAMSolver:
         return self, metric_vals
 
     # TODO jit ?
-    @jax.jit
     def _step(
         self,
     ):
@@ -212,21 +211,15 @@ class kernelRAMSolver:
         self._delta_xs = vectorTransport(
             self._x_cur, Gk, self._x_prev, self._delta_xs[:, :, : self._m], Tk
         )
-        delta_r_cur = rk[:, :, jnp.newaxis] - vectorTransport(
+        delta_r_cur = rk - vectorTransport(
             self._x_cur, Gk, self._x_prev, self._r_prev, Tk
-        )
-        if self._delta_rs is not None:
-            self._delta_rs = vectorTransport(
+            )[:, :, 0]
+        self._delta_rs = self._delta_rs.at[:, :, 1:].set(
+            vectorTransport(
                 self._x_cur, Gk, self._x_prev, self._delta_rs[:, :, : self._m - 1], Tk
             )
-            self._delta_rs = jnp.concatenate(
-                (delta_r_cur, self._delta_rs[:, :, : self._m - 1]),
-                axis=-1,
-            )
-        else:
-            self._delta_rs = delta_r_cur
-
-        mk = self._delta_rs.shape[-1]
+        )
+        self._delta_rs = self._delta_rs.at[:, :, 0].set(delta_r_cur)
 
         R = self._delta_rs
         X = self._delta_xs
@@ -234,7 +227,7 @@ class kernelRAMSolver:
         # TODO l_infty CONSTRAINED minimization?
         #       or adaptive regularization
         lam = next(self._l2_reg)
-        W_quad = jnp.einsum("ijm,ijkl,kln->mn", R, Gk, R) + lam * jnp.eye(mk)
+        W_quad = jnp.einsum("ijm,ijkl,kln->mn", R, Gk, R) + lam * jnp.eye(self._m)
         rhs = jnp.einsum("ij,ijkl,klm->m", rk, Gk, R)
         # for small matrix < 15 x 15 direct solve should be OK
         Gamma = jnp.linalg.solve(W_quad, rhs)
@@ -242,10 +235,12 @@ class kernelRAMSolver:
 
         rk_bar = rk - R @ Gamma
         delta_x_cur = -X @ Gamma + next(self._relaxation) * rk_bar
-        self._delta_xs = jnp.concatenate(
-            (delta_x_cur[:, :, jnp.newaxis], self._delta_xs[:, :, : self._m]),
-            axis=-1,
-        )
+        # self._delta_xs = jnp.concatenate(
+        #     (delta_x_cur[:, :, jnp.newaxis], self._delta_xs[:, :, : self._m]),
+        #     axis=-1,
+        # )
+        self._delta_xs = jnp.roll(self._delta_xs, 1, axis=-1)
+        self._delta_xs = self._delta_xs.at[:, :, 0].set(delta_x_cur)
 
         self._x_prev = self._x_cur.copy()
         v = evalTangent(
@@ -266,7 +261,7 @@ class kernelRAMSolver:
 
         return self, metric_vals
 
-    # @partial(jax.jit, static_argnames=('max_iter'))
+    @partial(jax.jit, static_argnames='max_iter')
     def iterate(
         self,
         x0: jnp.ndarray,
@@ -274,19 +269,15 @@ class kernelRAMSolver:
     ):
         solver, metric_vals_orig = self._initialize_iteration(x0)
         metric_vals = [metric_vals_orig]
-        for _ in range(solver._m):
-            solver, mv = solver._step()
-            metric_vals.append(mv)
         metric_vals = jnp.array(metric_vals)
 
-        def body_fn(carry, *args):
-            solver = carry
+        def body_fn(solver, *args):
             solver, metric_vals = solver._step()
 
             return solver, metric_vals
 
         solver, metric_vals_run = jax.lax.scan(
-            body_fn, solver, length=max_iter - solver._m
+            body_fn, solver, length=max_iter
         )
 
         metric_vals_run = jnp.array(metric_vals_run)

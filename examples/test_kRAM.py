@@ -1,31 +1,41 @@
+import os
+
+# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.1"
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+import jax
+
+jax.config.update("jax_traceback_filtering", "off")
+
 from fpw.kernelRAMSolver import *
 
 from geomloss import SamplesLoss
-import torch
+
+# import torch
 import warnings
+from time import perf_counter
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 _loss_fn = SamplesLoss()
 
-sinkdiv = lambda _x, _y: _loss_fn(
-    torch.from_numpy(np.array(_x)),
-    torch.from_numpy(np.array(_y)),
-)
+# sinkdiv = lambda _x, _y: _loss_fn(
+#     torch.from_numpy(np.array(_x)),
+#     torch.from_numpy(np.array(_y)),
+# )
 
 sinkdiv = lambda *args: 1.0
 
-
-N_samples = 100
-dim = 3
-N_iter = 150
+# with jax.profiler.trace("/tmp/profile-data"):
+N_samples = 2000
+dim = 20
+N_iter = 3000
 
 sigma_targ = 0.3
 m_targ = 0.0
-p = 1.0
+p = 4.0
 
-stepsize_SVGD = 0.9
-
+stepsize_SVGD = 0.5
 
 
 # Gaussian mixture
@@ -54,23 +64,23 @@ bandwidth = bandwidth_median(x0)
 oper = getOperatorSteinGradKL(log_density_targ, -stepsize_SVGD)
 
 solver = kernelRAMSolver(
-    oper, kern, relaxation=3.00, l2_regularization=8e-3, history_len=6,
+    oper,
+    kern,
+    relaxation=3.00,
+    l2_regularization=8e-3,
+    history_len=6,
 )
 
 e_init = sinkdiv(x0, sample_targ)
-err_sinkhorn = [[e_init], [e_init]]
+# err_sinkhorn = [[e_init], [e_init]]
 x = x0.copy()
 
+# t = perf_counter()
+# with jax.profiler.trace("/tmp/profile-data"):
 solver, (d_rkhs_kram, d_l2_kram) = solver.iterate(x, max_iter=N_iter)
 x_kRAM = solver._x_cur
-
-# baseline
-d_rkhs = []
-d_l2 = []
-
-# Run SVGD for reference
-x_SVGD = x0.copy()
-for _ in range(N_iter):
+def stepSVGD(carry, *args):
+    x_SVGD = carry
     sg = oper(x_SVGD)
     G = pairwiseScalarProductOfBasisVectors(x_SVGD, x_SVGD, kern)
     v = evalTangent(x_SVGD, sg, x_SVGD, kern)
@@ -79,11 +89,18 @@ for _ in range(N_iter):
 
     # Sinkhorn distance (== estimation of Wasserstein distance)
     # Need a reference sample ``sample.targ`` which has to be generated e.g. with MCMC
-    err_sinkhorn[1].append(sinkdiv(x_SVGD, sample_targ))
+    # err_sinkhorn = sinkdiv(x_SVGD, sample_targ)
     # Estimate the residual in H^d_k norm
-    d_rkhs.append(norm_rkhs(sg, G))
+    d_rkhs = norm_rkhs(sg, G)
     # Estimate size of the step in l2 norm;
-    d_l2.append(norm_l2(v))
+    d_l2 = norm_l2(v)
+
+    return x_SVGD, (d_rkhs, d_l2)
+x_SVGD, (d_rkhs, d_l2) = jax.lax.scan(stepSVGD, x0.copy(), length=N_iter)
+# dt = perf_counter() - t
+
+# print(f"Execution time {dt:3e}", flush=True)
+
 
 label_RAM = f"$k$RAM, m={solver._m}"
 
@@ -110,12 +127,12 @@ for ax in axs:
 
 axs[-1].legend()
 
+fig.savefig("test_kRAM_convergence.pdf")
 
 fig, axs = plt.subplots(1, 1)
 axs.scatter(*x_kRAM[:, :2].T, label=r"$x_\text{ kRAM}$")
 axs.scatter(*x_SVGD[:, :2].T, label=r"$x_\text{ SVGD }$")
 # axs.scatter(*sample_targ[:, :2].T, label=r"$x_{\infty}$")
 axs.legend()
-axs.grid()
 
-plt.show()
+fig.savefig("test_kRAM_scatter.pdf")
