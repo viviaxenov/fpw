@@ -1,6 +1,7 @@
 import os
+
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 import jax
 from flax import nnx
 
@@ -19,6 +20,23 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 
 from fpw.kernelRAMSolver import *
+
+
+def _load_from_ucml_repo(name: str):
+    import ucimlrepo
+
+    dataset = ucimlrepo.fetch_ucirepo(name=name)
+    X = jnp.array(dataset.data.features.to_numpy())
+    y = jnp.array(dataset.data.targets.to_numpy())
+    return X, y
+
+
+def _load_local(name: str):
+    path = os.path.join("./datasets/", name + ".txt")
+    dataset = np.loadtxt(path)
+    X, y = dataset[:, :-1], dataset[:, -1]
+
+    return jnp.array(X), jnp.array(y)
 
 
 def _normalize(
@@ -40,14 +58,57 @@ class FullyConnected(nnx.Module):
     def __init__(
         self,
         dim_input: int,
+        rngs,
         dim_output: int = 1,
         dim_hidden: int = 50,
         n_hidden: int = 1,
     ):
-        self.layers = [nnx.Linear(dim_input, dim_hidden, rngs=nnx.Rngs(0))]
+        self.layers = [
+            nnx.Linear(
+                dim_input,
+                dim_hidden,
+                rngs=rngs,
+                kernel_init=nnx.initializers.variance_scaling(
+                    scale=1.0,
+                    mode="fan_in",
+                    distribution="normal",
+                ),
+                bias_init=nnx.initializers.constant(
+                    0.0,
+                ),
+            )
+        ]
         for _ in range(n_hidden - 1):
-            self.layers.append(nnx.Linear(dim_hidden, dim_hidden, rngs=nnx.Rngs(0)))
-        self.layers.append(nnx.Linear(dim_hidden, dim_output, rngs=nnx.Rngs(0)))
+            self.layers.append(
+                nnx.Linear(
+                    dim_hidden,
+                    dim_hidden,
+                    rngs=rngs,
+                    kernel_init=nnx.initializers.variance_scaling(
+                        scale=1.0,
+                        mode="fan_in",
+                        distribution="normal",
+                    ),
+                    bias_init=nnx.initializers.constant(
+                        0.0,
+                    ),
+                )
+            )
+        self.layers.append(
+            nnx.Linear(
+                dim_hidden,
+                dim_output,
+                rngs=rngs,
+                kernel_init=nnx.initializers.variance_scaling(
+                    scale=1.0,
+                    mode="fan_in",
+                    distribution="normal",
+                ),
+                bias_init=nnx.initializers.constant(
+                    0.0,
+                ),
+            )
+        )
 
     def __call__(
         self,
@@ -60,35 +121,32 @@ class FullyConnected(nnx.Module):
         return y
 
 
-
-class BayesianNetwork:
+class BayesianNetworkRegression:
     def __init__(
         self,
-        dataset: Tuple[ArrayLike, ArrayLike],
+        dataset: str,
         architecture: nnx.Module,
+        dataset_src: Literal["local", "remote"] = "local",
         alpha_lambda_0=1.0,
         alpha_gamma_0=1.0,
         beta_lambda_0=0.1,
         beta_gamma_0=0.1,
         random_seed=1,
     ):
-        if isinstance(dataset, tuple):
-            self.X, self.y = dataset
-        elif isinstance(dataset, str):
-            import ucimlrepo
 
-            self.ds = ucimlrepo.fetch_ucirepo(name=dataset)
+        self.rngs = nnx.Rngs(random_seed)
 
-            # TODO: normalization of data?
-            self.X = jnp.array(self.ds.data.features.to_numpy())
-            self.y = jnp.array(self.ds.data.targets.to_numpy())
-
-        # dataset normalization
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            self.X, self.y, test_size=0.1
+        X, y = (
+            _load_local(dataset)
+            if dataset_src == "local"
+            else _load_from_ucml_repo(dataset)
         )
 
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.1, random_state=random_seed
+        )
+
+        # dataset normalization
         self.X, self.X_mean, self.X_std = _normalize(X_train)
         self.y, self.y_mean, self.y_std = _normalize(y_train)
 
@@ -97,7 +155,7 @@ class BayesianNetwork:
 
         self.architecture = architecture
         self.dim = self.X.shape[-1]
-        self.nn = self.architecture(self.dim)
+        self.nn = self.architecture(self.dim, self.rngs)
 
         # Parameters of the hyperprior distribution
         # on gamma (inv. covariance of measurement noise)
@@ -211,7 +269,7 @@ class BayesianNetwork:
     ):
         y_pred = self.prediction(self.X_test, nn_params)
 
-        return jnp.sqrt(((y_pred - self.y_test)**2).mean())
+        return jnp.sqrt(((y_pred - self.y_test) ** 2).mean())
 
     # TODO: how to manage random number generators???
     def sample_prior(
@@ -228,7 +286,7 @@ class BayesianNetwork:
         for leaf in jax.tree.leaves(nn_params_base):
             key, split = jax.random.split(split)
             new_leaves.append(
-                jax.random.normal(key=key, shape=leaf.shape) / jnp.sqrt(lambda_)
+                jax.random.normal(key=key, shape=leaf.shape) / lambda_**0.5
             )
 
         new_params = jax.tree.unflatten(td_params, new_leaves)
@@ -244,21 +302,37 @@ class BayesianNetwork:
             lambda_ = jax.random.gamma(key2, self.alpha_lambda_0) / self.beta_lambda_0
 
             # jax.debug.print("lambda = {0:.2e}, gamma = {1:.2e}", lambda_, gamma)
-            w = jax.random.normal(key=key3, shape=(self.n_nn_params,)) / jnp.sqrt(
-                lambda_
-            )
+            w = jax.random.normal(key=key3, shape=(self.n_nn_params,)) / jnp.sqrt(700)
             return split, jnp.concatenate([jnp.log(jnp.array([gamma, lambda_])), w])
 
         split, sample = jax.lax.scan(one_sample, self.split, length=n_samples)
         self.split = split
         return sample
 
+    def init_samples(self, n_samples: int = 1):
+        def one_sample(rngs, *args):
+            gamma = rngs.gamma(self.alpha_gamma_0) / self.beta_gamma_0
+            lambda_ = rngs.gamma(self.alpha_lambda_0) / self.beta_lambda_0
+
+            # jax.debug.print("lambda = {0:.2e}, gamma = {1:.2e}", lambda_, gamma)
+            # as in Viktor's implementation, the weights have initial covariance \sqrt{d_input + 1} and biases are set to zero
+            nn_cur = self.architecture(self.dim, rngs)
+            _, state = nnx.split(nn_cur)
+
+            return self.flatten_params((jnp.log(gamma), jnp.log(lambda_), state))
+
+        arr_rngs = self.rngs.fork(split=n_samples)
+
+        sample = nnx.vmap(one_sample)(arr_rngs)
+
+        return sample
+
 
 if __name__ == "__main__":
 
-    bayes_nn = BayesianNetwork(
+    bayes_nn = BayesianNetworkRegression(
         # "Concrete Compressive Strength",
-        "Wine",
+        "wine",
         FullyConnected,
     )
     params_init = bayes_nn.sample_prior()
@@ -309,7 +383,6 @@ if __name__ == "__main__":
 
         return sample_cur, vals, rmses
 
-
     def sample_SVGD(
         log_posterior: Callable,
         kern: Callable,
@@ -349,15 +422,16 @@ if __name__ == "__main__":
         def gen_regularization():
             k = 0
             while True:
-                yield 1e0 + 1e3**(-k)
+                yield 1e0 + 1e3 ** (-k)
                 k += 1
+
         x0 = sample_init.copy()
         oper = getOperatorSteinGradKL(log_posterior, -tau)
 
         solver = kernelRAMSolver(
             oper,
             kern,
-            relaxation=1.0,
+            relaxation=1.00,
             l2_regularization=1e0,
             history_len=8,
             metrics=(lp_metric, rmse_metric),
@@ -371,30 +445,26 @@ if __name__ == "__main__":
 
         return solver._x_cur, metric_vals
 
-
-    bandwidth = 0.5
-    print(f"{bandwidth=:.2e}")
-    kern = lambda _x1, _x2: jnp.exp(-0.5*((_x1 - _x2) ** 2).sum() / bandwidth**2)
-
-    sample_init = bayes_nn.sample_prior_flat_params(10)
-    sample_init, _ = sample_SVGD(
-        log_posterior_flat, kern, sample_init, tau=1e-5, N_iter=10
-    )
-
-    # with jax.profiler.trace("./tmp/jax-profile/", create_perfetto_trace=True):
+    #  sample_init = bayes_nn.sample_prior_flat_params(10)
+    sample_init = bayes_nn.init_samples(10)
     bandwidth = bandwidth_median(sample_init)
     print(f"{bandwidth=:.2e}", flush=True)
-    kern = lambda _x1, _x2: jnp.exp(-0.5*((_x1 - _x2) ** 2).sum() / bandwidth**2)
-    N_iter = 2_00
+    kern = lambda _x1, _x2: jnp.exp(-0.5 * ((_x1 - _x2) ** 2).sum() / bandwidth**2)
+    sample_init, _ = sample_SVGD(
+        log_posterior_flat, kern, sample_init, tau=1e-7, N_iter=10
+    )
+
+    N_iter = 2000
     print("Starting SVGD", flush=True)
     _, (r_rkhs_SVGD, dx_l2_SVGD, vals_SVGD, rmses_SVGD) = sample_SVGD(
-        log_posterior_flat, kern, sample_init, tau=1e-5, N_iter=N_iter
+        log_posterior_flat, kern, sample_init, tau=5e-6, N_iter=N_iter
     )
     print("             ... Done", flush=True)
     print("Starting kRAM", flush=True)
-    _, (r_rkhs_kRAM, dx_l2_kRAM, vals_kRAM, rmses_kRAM) = sample_kRAM(
-        log_posterior_flat, kern, sample_init, tau=2e-5, N_iter=N_iter - 1
-    )
+    with jax.profiler.trace("/tmp/profile-data"):
+        _, (r_rkhs_kRAM, dx_l2_kRAM, vals_kRAM, rmses_kRAM) = sample_kRAM(
+            log_posterior_flat, kern, sample_init, tau=1e-5, N_iter=N_iter
+        )
     print("             ... Done", flush=True)
 
     # vals_floor = np.min(np.minimum(vals_SVGD, vals_kRAM))
@@ -405,25 +475,25 @@ if __name__ == "__main__":
 
     ax = axs[0, 0]
     ax.set_title(r"Residual, $\| \cdot \|_{RKHS}$")
-    ax.plot(r_rkhs_SVGD, 'b-', label='SVGD')
-    ax.plot(r_rkhs_kRAM, 'r-', label='kRAM')
+    ax.plot(r_rkhs_SVGD, "b-", label="SVGD")
+    ax.plot(r_rkhs_kRAM, "r-", label="kRAM")
     ax.set_yscale("log")
 
     ax = axs[1, 0]
     ax.set_title(r"Size of step, $\| \cdot \|_{L_2}$")
-    ax.plot(dx_l2_SVGD, 'b-', label='SVGD')
-    ax.plot(dx_l2_kRAM, 'r-', label='kRAM')
+    ax.plot(dx_l2_SVGD, "b-", label="SVGD")
+    ax.plot(dx_l2_kRAM, "r-", label="kRAM")
     ax.set_yscale("log")
 
     ax = axs[0, 1]
     ax.set_title("$\\log \\rho_\\infty$")
-    ax.plot(vals_SVGD, 'b-', label='SVGD')
-    ax.plot(vals_kRAM, 'r-', label='kRAM')
+    ax.plot(vals_SVGD, "b-", label="SVGD")
+    ax.plot(vals_kRAM, "r-", label="kRAM")
 
     ax = axs[1, 1]
     ax.set_title("Test RMSE (mean over ensemble)")
-    ax.plot(rmses_SVGD, 'b-', label='SVGD')
-    ax.plot(rmses_kRAM, 'r-', label='kRAM')
+    ax.plot(rmses_SVGD, "b-", label="SVGD")
+    ax.plot(rmses_kRAM, "r-", label="kRAM")
     ax.set_yscale("log")
     ax.legend()
 
@@ -434,4 +504,3 @@ if __name__ == "__main__":
     fig.savefig("bayes_nn.pdf")
 
     plt.show()
-
