@@ -135,7 +135,7 @@ Notebook `process_data.ipynb` creates tables and plots.
 
 ## Citation
 
-Currently submitted to NeurIPS
+Currently submitted to JMLR
 
 # General case
 
