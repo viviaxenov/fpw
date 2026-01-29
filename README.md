@@ -22,27 +22,8 @@ W^2_2(\rho_1, \rho_2) = \inf_{\pi \in \Pi(\rho_1, \rho_2)} \int \|x - y\|^2_2 d\
 $$
 
 This infinite-dimensional metric space has a structure, similar to a Riemannian manifold.
-The goal of this project is to identify interesting fixed-point problems and to provide accelerated iterative solution with Riemannian Anderson Mixing.
 
-## Installation
-
-```bash
-pip install --upgrade fpw@git+https://github.com/viviaxenov/fpw
-```
-
-### Requirements
-
-* [cvxpy](https://www.cvxpy.org/) for $l_\infty$ regularized minimization
-* [torch](https://pytorch.org/)
-
-Optional:
-
-* [emcee](https://emcee.readthedocs.io/en/stable/) for sampling from general distributions
-* [pymanopt](https://pymanopt.org/) for comparison with Riemannian minimization methods
-
-# Gaussian case
-
-We currently focus mostly on the Bures-Wasserstein manifold, i.e. the subset of Gaussian measures with zero mean (parametrized with their covariance matrices)
+This project focuses on the **Bures-Wasserstein manifold**, i.e. the subset of Gaussian measures with zero mean (parametrized with their covariance matrices)
 
 $$
 \mathcal{N}_0^d = \{\Sigma: \Sigma^T = \Sigma \succ 0 \}
@@ -64,7 +45,24 @@ $$
 Riemannian Anderson Mixing relies on keeping a set of historical vectors, which is transported to the tangent space of the current iterate with a *vector transport* mapping.
 The update direction is then chosen based on a solution of a $l_\infty$ regularized least-squares problem in the tangent space.
 
-## Code example
+
+## Installation
+
+```bash
+pip install --upgrade fpw@git+https://github.com/viviaxenov/fpw
+```
+
+### Requirements
+
+* [cvxpy](https://www.cvxpy.org/) for $l_\infty$ regularized minimization
+
+Optional:
+
+* [emcee](https://emcee.readthedocs.io/en/stable/) for sampling from general distributions
+* [pymanopt](https://pymanopt.org/) for comparison with Riemannian minimization methods
+* [torch](https://pytorch.org/) To run `pymanopt` with automatic differentiation
+
+# Examples
 
 Here, a solution of the Wasserstein barycenter problem is presented.
 [`Barycenter`](fpw.md#fpw.ProblemGaussian.Barycenter) defines the problem, including the relevant fixed-point operator.
@@ -124,6 +122,17 @@ opt_result = optimizer.run(pymanopt_problem, initial_point=cov_init)
 cov_pymanopt = opt_result.log["iterations"]["point"][-1]
 ```
 
+## Further examples
+
+More examples can be found in the `examples/` directory.
+`example.py` runs BWRAM and PyManOpt's implementation of Riemannian Gradient Descent and compares them to the Picard solution.
+
+`test_config.json` is a config file for serial launch utility `test.py`.
+Usage:
+```bash
+    ../src/fpw/test.py test_config.json
+```
+
 ## Reproduction of manuscript results
 
 ```bash
@@ -139,4 +148,4 @@ Currently submitted to JMLR
 
 # General case
 
-Solver for the general case can be found in `fpw.RAMSolver`, and the JAX implementation in `fpw.RAMSolverJAX`, with wrappers for operators in `fpw.utility`. This however is still TBD.
+Generalization of the approach to sampling arbitrary distribution with kernel-based methods can be found in the  [Fixed-Point Stein repo](https://github.com/viviaxenov/fps).
