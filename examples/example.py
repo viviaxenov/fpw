@@ -50,7 +50,7 @@ except ImportError:
 BW_manifold = problem_bc.base_manifold
 cost_torch = pymanopt.function.pytorch(BW_manifold)(problem_bc.get_cost_torch())
 pymanopt_problem = pymanopt.Problem(BW_manifold, cost_torch)
-optimizer = pymanopt.optimizers.SteepestDescent(log_verbosity=1)
+optimizer = pymanopt.optimizers.SteepestDescent(log_verbosity=1, min_gradient_norm=tol)
 opt_result = optimizer.run(pymanopt_problem, initial_point=cov_init)
 cov_pymanopt = opt_result.log["iterations"]["point"][-1]
 

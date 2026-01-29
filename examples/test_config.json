@@ -1,0 +1,56 @@
+{
+    "problems": {
+        "dW_KL": {
+            "vt_kind": "trivial",
+            "scaling": 0.4,
+            "dim": [8, 16],
+            "sigma_min": 0.8,
+            "sigma_max": [1.0, 5.0],
+            "rs": [1,2]
+        },
+        "OU": {
+            "vt_kind": "trivial",
+            "dt": 0.2,
+            "dim": [8, 16],
+            "sigma_min": 0.5,
+            "sigma_max": [1.0, 5.0],
+            "rs": [1,2]
+        },
+        "Median": {
+           "dim": [ 5, 10],
+            "vt_kind": "trivial",
+           "n_sigmas": [ 5, 10],
+           "rs": [1,2],
+           "eps": 1e-3
+        },
+        "EntBC": {
+           "dim": [ 5, 10],
+            "vt_kind": "trivial",
+           "n_sigmas": [ 5, 10],
+           "rs": [1,2],
+           "gamma": 1e-3
+        },
+        "Barycenter": {
+           "dim": [ 5, 10],
+           "vt_kind": "trivial",
+           "n_sigmas": [ 5, 10],
+           "rs": [1,2]
+        }
+    },
+    "methods": {
+        "BWRAM": {
+            "history_len": [2, 7, 15],
+            "l_inf_bound_Gamma":  [1.5, 10.0],
+            "relaxation": [1.0, 1.2],
+            "N_steps_max": 40
+        },
+        "RGD": {"N_steps_max": 40},
+        "RCG": {"N_steps_max": 40}
+    },
+    "N_steps_max": 1000,
+    "r_min": 1e-5,
+    "cost_min": 1e-10,
+    "plot": true,
+    "n_max_plot": 20,
+    "output_dir": "./outputs/test"
+}
