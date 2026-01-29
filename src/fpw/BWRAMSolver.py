@@ -3,13 +3,7 @@ from typing import Callable, Union, List, Dict, Generator, Literal
 import numpy as np
 import scipy as sp
 
-import torch
-
-torch.set_default_dtype(torch.float64)
-import ot
-from geomloss import SamplesLoss
 import cvxpy as cp
-from cvxpylayers.torch import CvxpyLayer
 
 from .utility import _as_generator
 
@@ -47,13 +41,34 @@ def Christoffel(Sigma: np.ndarray, X: np.ndarray, Y: np.ndarray):
     Gamma = Sigma @ L_CYmulL_CX + L_CYmulL_CX @ Sigma - L_CX @ Y - L_CY @ X
     return 0.5 * (Gamma + Gamma.T)
 
-def _norm_bw_stab(V, Sigma):
-        norm_sq = np.trace(V @ Sigma @ V)
-        return np.sqrt(np.maximum(0., norm_sq))
 
-def dBW(Cov_0, Cov_1):
-    zero = np.zeros(Cov_0.shape[0])
-    return ot.gaussian.bures_wasserstein_distance(zero, zero, Cov_0, Cov_1)
+def _norm_bw_stab(V, Sigma):
+    norm_sq = np.trace(V @ Sigma @ V)
+    return np.sqrt(np.maximum(0.0, norm_sq))
+
+
+def dBW(Sigma_0, Sigma_1):
+    Tr0 = np.trace(Sigma_0)
+    Tr1 = np.trace(Sigma_1)
+
+    sqrt_Cov_0 = sp.linalg.sqrtm(Sigma_0)
+    cross_term = sp.linalg.sqrtm(sqrt_Cov_0 @ Sigma_1 @ sqrt_Cov_0)
+    d = Tr0 + Tr1 - 2.0 * np.trace(cross_term)
+
+    return np.sqrt(np.maximum(d, 0.0))
+
+
+def OT_mapping(Sigma_0, Sigma_1):
+    U, S, V = sp.linalg.svd(Sigma_0)
+
+    S = np.maximum(1e-20, S)
+
+    Sigma0_sqrt = U @ np.diag(S**0.5) @ V
+    Sigma0_sqrtinv = U @ np.diag(S ** (-0.5)) @ V
+
+    M = sp.linalg.sqrtm(Sigma0_sqrt @ Sigma_1 @ Sigma0_sqrt)
+
+    return Sigma0_sqrtinv @ M @ Sigma0_sqrtinv
 
 
 def parallel_transport(Sigma_0, Sigma_1, U0, is_map=True):
@@ -62,9 +77,7 @@ def parallel_transport(Sigma_0, Sigma_1, U0, is_map=True):
         U0 = to_dSigma(U0, Sigma_0)
 
     Id = np.eye(dim)
-    T = ot.gaussian.bures_wasserstein_mapping(
-        np.zeros(dim), np.zeros(dim), Sigma_0, Sigma_1
-    )[0]
+    T = OT_mapping(Sigma_0, Sigma_1)
     Tdir = T - Id
 
     def Sigma_dSigma_dt(t):
@@ -100,9 +113,7 @@ def vector_translation(Sigma_0, Sigma_1, U0):
     dim = Sigma_0.shape[0]
 
     Id = np.eye(dim)
-    Tinv = ot.gaussian.bures_wasserstein_mapping(
-        np.zeros(dim), np.zeros(dim), Sigma_1, Sigma_0
-    )[0]
+    Tinv = OT_mapping(Sigma_1, Sigma_0)     
     U1 = U0 @ Tinv
 
     return U1
@@ -120,6 +131,7 @@ def project_on_tangent(U, Sigma):
 def one_step_approx(Sigma_0, Sigma_1, U0):
     U1 = vector_translation(Sigma_0, Sigma_1, U0)
     return project_on_tangent(U1, Sigma_1)
+
 
 def _get_cvxpy_problem(dim: int, mk: int, Gamma_bound: float) -> cp.Problem:
     gamma = cp.Variable((mk,), name="gamma")
@@ -195,7 +207,6 @@ class BWRAMSolver:
         self.norm_Gamma = []
         self.norm_rk = []
 
-
     def _operator_and_residual(self, x_cur: np.ndarray):
         if hasattr(self._operator, "residual"):
             r = self._operator.residual(x_cur)
@@ -205,9 +216,7 @@ class BWRAMSolver:
             x1 = self._operator(x_cur)
             dim = x0.shape[0]
 
-            T = ot.gaussian.bures_wasserstein_mapping(
-                np.zeros(dim), np.zeros(dim), x0, x1
-            )[0]
+            T = OT_mapping(x0, x1)
             r = T - np.eye(dim)
 
         return x_cur, r
@@ -295,7 +304,7 @@ class BWRAMSolver:
         self._k += 1
         return self._x_cur
 
-    def iterate(self, x0: torch.Tensor, max_iter: int, residual_conv_tol: np.float64):
+    def iterate(self, x0: np.ndarray, max_iter: int, residual_conv_tol: np.float64):
         if self._k == 0:
             self._initialize_iteration(x0)
         while np.linalg.norm(self._r_prev) > residual_conv_tol:

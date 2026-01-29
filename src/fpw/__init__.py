@@ -1,3 +1,3 @@
-# from .BWRAMSolver import BWRAMSolver, dBW
-# from .ProblemGaussian import *
+from .BWRAMSolver import BWRAMSolver, dBW, OT_mapping
+from .ProblemGaussian import *
 

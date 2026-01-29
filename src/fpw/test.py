@@ -5,12 +5,10 @@ from typing import List, Dict, Union
 
 import numpy as np
 import scipy as sp
-import ot
 import pymanopt
 
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
-import corner
 
 
 from time import perf_counter
@@ -387,8 +385,8 @@ def _plot_figure(
 
     r_to_plot.sort(key=_pretty_sorting)
 
+    plot_name = os.path.join(dirname_cur, f"{problem.name}.pdf")
     for res in r_to_plot:
-        plot_name = os.path.join(dirname_cur, f"{problem.name}.pdf")
         val = res[key]
 
         k_cur_min = np.argmin(np.array(val))

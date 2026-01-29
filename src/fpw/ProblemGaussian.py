@@ -13,8 +13,8 @@ import torch
 
 torch.set_default_dtype(torch.float64)
 
-import ot
 from .PymanoptInterface import *
+from .BWRAMSolver import OT_mapping, dBW
 
 from num2tex import num2tex
 
@@ -188,7 +188,7 @@ class Problem(metaclass=_Meta):
         zero = np.zeros(self.dim)
         Id = np.eye(self.dim)
         Sigma_next = self(Sigma)
-        T = ot.gaussian.bures_wasserstein_mapping(zero, zero, Sigma, Sigma_next)[0]
+        T = OT_mapping(Sigma, Sigma_next)
         return Sigma_next, T - Id
 
     # TODO: why is this abstract?
@@ -336,7 +336,6 @@ class OUEvolution(Problem):
     @property
     def dt(self):
         return self._dt
-
 
     def __call__(self, Sigma):
         return self.tmp1 @ Sigma @ self.tmp1 + self.tmp2 @ self.target @ self.tmp2
@@ -489,12 +488,7 @@ class Barycenter(Problem):
 
     def cost(self, Sigma):
         zero = np.zeros(self.dim)
-        dists = np.array(
-            [
-                ot.gaussian.bures_wasserstein_distance(zero, zero, Sigma, _S) ** 2
-                for _S in self._sigmas
-            ]
-        )
+        dists = np.array([dBW(Sigma, _S) ** 2 for _S in self._sigmas])
         return np.dot(self._weights, dists)
 
     def get_cost_torch(self):
@@ -502,7 +496,6 @@ class Barycenter(Problem):
         return partial(
             barycenter_loss_vectorized, self._sigmas_torch, self._weights_torch
         )
-
 
     @property
     def n_sigmas(self):
@@ -561,12 +554,7 @@ class EntropicBarycenter(Barycenter):
 
     def cost(self, Sigma):
         zero = np.zeros(self.dim)
-        dists = np.array(
-            [
-                (ot.gaussian.bures_wasserstein_distance(zero, zero, Sigma, _S) ** 2)
-                for _S in self._sigmas
-            ]
-        )
+        dists = np.array([dBW(Sigma, _S) ** 2 for _S in self._sigmas])
 
         entr = 0.5 * (
             np.trace(Sigma) - Sigma.shape[0] - np.linalg.slogdet(Sigma).logabsdet
@@ -580,7 +568,6 @@ class EntropicBarycenter(Barycenter):
             self._weights_torch,
             self._gamma,
         )
-
 
     @property
     def n_sigmas(self):
@@ -659,12 +646,7 @@ class Median(Problem):
     def residual(self, Sigma):
         zero = np.zeros(self.dim)
         Id = np.eye(self.dim)
-        transports = np.array(
-            [
-                ot.gaussian.bures_wasserstein_mapping(zero, zero, Sigma, _S)[0]
-                for _S in self._sigmas
-            ]
-        )
+        transports = np.array([OT_mapping(Sigma, _S) for _S in self._sigmas])
 
         V = transports - Id[np.newaxis, :, :]
 
@@ -681,14 +663,7 @@ class Median(Problem):
     def cost(self, Sigma):
         zero = np.zeros(self.dim)
         dists = np.array(
-            [
-                (
-                    ot.gaussian.bures_wasserstein_distance(zero, zero, Sigma, _S) ** 2
-                    + self._eps**2
-                )
-                ** 0.5
-                for _S in self._sigmas
-            ]
+            [(dBW(Sigma, _S) ** 2 + self._eps**2) ** 0.5 for _S in self._sigmas]
         )
         return self._scaling * np.dot(self._weights, dists)
 
@@ -700,7 +675,6 @@ class Median(Problem):
             self._eps,
             self._scaling,
         )
-
 
     @property
     def n_sigmas(self):
