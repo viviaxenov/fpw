@@ -25,5 +25,6 @@ extra = [
     "pandas >= 2.1.4", 
     "tqdm >= 4.67.1",
     "pymanopt >= 2.2.1",
+    "matplotlib",
     "torch >= 2.2.2"
 ]
