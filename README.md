@@ -144,7 +144,11 @@ Notebook `process_data.ipynb` creates tables and plots.
 
 ## Citation
 
+Vitalii Aksenov, Martin Eigel, and Mathias Oster. “Anderson Mixing in Bures Wasserstein Space of Gaussian Measures”.  arXiv: 2601.22038 \[math.OC\].
+url: https://arxiv.org/abs/2601.22038.
+
 Currently submitted to JMLR
+
 
 # General case
 
